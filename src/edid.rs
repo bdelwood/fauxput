@@ -86,7 +86,15 @@ impl<S: AsRef<str> + ?Sized> ToDescriptorString for S {
 
 /// Build EDID 1.4 base block from display spec
 pub fn build(spec: &EdidSpec) -> Result<Vec<u8>> {
+    log::debug!(
+        "building EDID for {}x{}@{}Hz (instance {})",
+        spec.width,
+        spec.height,
+        spec.refresh_hz,
+        spec.instance_index
+    );
     let t = timing::cvt_rb_v1(spec.width, spec.height, spec.refresh_hz)?;
+    log::trace!("CVT-RB timing: {:?}", t);
 
     let product_name = format!("fauxput-{}", spec.instance_index);
     let serial_str = format!("{}x{}@{}", spec.width, spec.height, spec.refresh_hz);
@@ -238,4 +246,108 @@ pub fn build_range_limits(t: &Timing, refresh_hz: u32) -> Result<EdidR4DisplayRa
         )
         .timings_support(EdidR4DisplayRangeVideoTimingsSupport::RangeLimitsOnly)
         .build())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn checksum_ok(bytes: &[u8]) -> bool {
+        bytes.iter().fold(0u8, |a, b| a.wrapping_add(*b)) == 0
+    }
+
+    fn spec_60(w: u32, h: u32) -> EdidSpec {
+        EdidSpec {
+            width: w,
+            height: h,
+            refresh_hz: 60,
+            instance_index: 0,
+        }
+    }
+
+    #[test]
+    fn header_and_release_bytes() {
+        let bytes = build(&spec_60(1920, 1080)).unwrap();
+        assert_eq!(bytes.len(), 128);
+        assert_eq!(
+            &bytes[0..8],
+            &[0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00]
+        );
+        assert_eq!(&bytes[18..20], &[0x01, 0x04]);
+        assert!(checksum_ok(&bytes));
+    }
+
+    #[test]
+    fn all_canonical_modes() {
+        for (w, h) in [
+            (1920, 1080),
+            (1920, 1200),
+            (2560, 1440),
+            (3840, 2160),
+            (3840, 2400),
+        ] {
+            let bytes = build(&spec_60(w, h)).expect("valid mode");
+            assert_eq!(bytes.len(), 128, "{w}x{h}");
+            assert!(checksum_ok(&bytes), "checksum {w}x{h}");
+            assert_eq!(bytes[126], 0, "extension count {w}x{h}");
+        }
+    }
+
+    #[test]
+    fn instance_index_appears_in_serial_field() {
+        let a = build(&EdidSpec {
+            instance_index: 0,
+            ..spec_60(1920, 1080)
+        })
+        .unwrap();
+        let b = build(&EdidSpec {
+            instance_index: 7,
+            ..spec_60(1920, 1080)
+        })
+        .unwrap();
+        assert_eq!(u32::from_le_bytes(a[12..16].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(b[12..16].try_into().unwrap()), 7);
+    }
+
+    /// External validation via `edid-decode`
+    #[test]
+    #[ignore]
+    fn validates_with_edid_decode() {
+        use std::io::Write;
+        use std::process::Command;
+
+        for (w, h) in [
+            (1920, 1080),
+            (1920, 1200),
+            (2560, 1440),
+            (3840, 2160),
+            (3840, 2400),
+        ] {
+            let bytes = build(&spec_60(w, h)).unwrap();
+
+            let mut tmp = tempfile::NamedTempFile::new().unwrap();
+            tmp.write_all(&bytes).unwrap();
+            tmp.flush().unwrap();
+
+            let output = Command::new("edid-decode")
+                .arg("--check")
+                .arg(tmp.path())
+                .output()
+                .expect("edid-decode not found. Install it with `v4l-utils`.");
+
+            let combined = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.status.success(),
+                "edid-decode rejected {w}x{h}@60:\n{combined}"
+            );
+            assert!(
+                !combined.contains("FAIL:"),
+                "edid-decode FAIL for {w}x{h}@60:\n{combined}"
+            );
+        }
+    }
 }
