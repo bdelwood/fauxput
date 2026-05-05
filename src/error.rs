@@ -14,4 +14,7 @@ pub enum Error {
 
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    Edid(#[from] crate::edid::EdidError),
 }
