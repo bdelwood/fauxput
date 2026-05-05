@@ -1,0 +1,28 @@
+# Cargo
+/target
+debug
+**/*.rs.bk
+*.pdb
+**/mutants.out*/
+rustc-ice-*.txt
+
+# makepkg scratch + output
+/packaging/arch/pkg/
+/packaging/arch/src/
+*.pkg.tar.zst
+
+# mdbook build output
+/docs/book/
+
+# logs
+*.log
+/tmp/
+
+# editor
+.DS_Store
+*.swp
+*~
+
+# git worktrees
+/.worktrees/
+
