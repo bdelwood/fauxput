@@ -1,0 +1,74 @@
+name: Lint, format, and test
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "justfile"
+      - ".github/workflows/ci.yaml"
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "justfile"
+      - ".github/workflows/ci.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint-format:
+    name: Format + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcvt-dev libwayland-dev libdrm-dev pkg-config
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Check formatting
+        run: just fmt-check
+
+      - name: Run clippy
+        run: just lint
+
+  test:
+    name: Tests
+    needs: lint-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcvt-dev libwayland-dev libdrm-dev pkg-config
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Run tests
+        run: just test
