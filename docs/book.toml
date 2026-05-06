@@ -1,0 +1,20 @@
+[book]
+title = "fauxput"
+description = "Manage virtual displays on Linux KDE Plasma 6 / Wayland — user guide and reference."
+authors = ["Brodi Elwood"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/bdelwood/fauxput"
+edit-url-template = "https://github.com/bdelwood/fauxput/edit/main/docs/{path}"
+site-url = "/fauxput/"
+
+[output.html.search]
+enable = true
+
+[output.html.fold]
+enable = true
+level = 1
