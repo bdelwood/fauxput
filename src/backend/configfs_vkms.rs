@@ -135,35 +135,39 @@ impl ConfigfsVkms {
     /// Forward-walk the configfs schema, recording mkdirs and symlink for rollback
     /// On any failure, replay the log in reverse
     fn build(&self, name: &str, edid: &[u8]) -> Result<FeatureAcceptance> {
-        let mut log: Vec<Op> = Vec::new();
-        self.commit(name, edid, &mut log)
-            // Best-effort rollback
-            .inspect_err(|_| log.iter().rev().for_each(|op| op.undo()))
+        let mut ops: Vec<Op> = Vec::new();
+        self.commit(name, edid, &mut ops).inspect_err(|e| {
+            log::warn!(
+                "build of {name} failed ({e}); rolling back {} ops",
+                ops.len()
+            );
+            ops.iter().rev().for_each(|op| op.undo());
+        })
     }
 
     // Walks the configfs schema, logging each step so the caller can unwind on failure.
-    fn commit(&self, name: &str, edid: &[u8], log: &mut Vec<Op>) -> Result<FeatureAcceptance> {
+    fn commit(&self, name: &str, edid: &[u8], ops: &mut Vec<Op>) -> Result<FeatureAcceptance> {
         let inst = self.root.join(name);
         // Top-level instance directory. Configfs auto-populates the empty
         // {planes, crtcs, encoders, connectors} subdirs.
-        self.mkdir(&inst, log)?;
+        self.mkdir(&inst, ops)?;
 
         // Plane #0: primary type.
         let plane = inst.join("planes/0");
-        self.mkdir(&plane, log)?;
+        self.mkdir(&plane, ops)?;
         self.set(&plane.join("type"), Payload::PlanePrimary)?;
 
         // CRTC #0.
         let crtc = inst.join("crtcs/0");
-        self.mkdir(&crtc, log)?;
+        self.mkdir(&crtc, ops)?;
 
         // Encoder #0.
         let encoder = inst.join("encoders/0");
-        self.mkdir(&encoder, log)?;
+        self.mkdir(&encoder, ops)?;
 
         // Connector #0.
         let connector = inst.join("connectors/0");
-        self.mkdir(&connector, log)?;
+        self.mkdir(&connector, ops)?;
 
         // EDID-via-configfs is in patch review on dri-devel as of 04-2026
         // Not yet in mainline kernel as of v7.0.
@@ -181,9 +185,9 @@ impl ConfigfsVkms {
         self.set(&connector.join("status"), Payload::ConnectorConnected)?;
 
         // Symlinks expressing the topology.
-        self.symlink(&crtc, &plane.join("possible_crtcs/0"), log)?;
-        self.symlink(&crtc, &encoder.join("possible_crtcs/0"), log)?;
-        self.symlink(&encoder, &connector.join("possible_encoders/0"), log)?;
+        self.symlink(&crtc, &plane.join("possible_crtcs/0"), ops)?;
+        self.symlink(&crtc, &encoder.join("possible_crtcs/0"), ops)?;
+        self.symlink(&encoder, &connector.join("possible_encoders/0"), ops)?;
 
         // Commit. Kernel validates the graph here and rejects via
         // -EINVAL if any topology constraint fails (no plane, missing
@@ -193,26 +197,29 @@ impl ConfigfsVkms {
         Ok(FeatureAcceptance { edid_applied })
     }
 
-    fn mkdir(&self, path: &Path, log: &mut Vec<Op>) -> Result<()> {
+    fn mkdir(&self, path: &Path, ops: &mut Vec<Op>) -> Result<()> {
+        log::trace!("mkdir {}", path.display());
         fs::create_dir(path).map_err(|source| Error::Mkdir {
             path: path.into(),
             source,
         })?;
-        log.push(Op::Mkdir(path.into()));
+        ops.push(Op::Mkdir(path.into()));
         Ok(())
     }
 
-    fn symlink(&self, target: &Path, link: &Path, log: &mut Vec<Op>) -> Result<()> {
+    fn symlink(&self, target: &Path, link: &Path, ops: &mut Vec<Op>) -> Result<()> {
+        log::trace!("symlink {} -> {}", link.display(), target.display());
         unix_fs::symlink(target, link).map_err(|source| Error::Symlink {
             link: link.into(),
             target: target.into(),
             source,
         })?;
-        log.push(Op::Symlink(link.into()));
+        ops.push(Op::Symlink(link.into()));
         Ok(())
     }
 
     fn write_attr(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+        log::trace!("write {} ({} bytes)", path.display(), bytes.len());
         fs::write(path, bytes).map_err(|source| Error::AttributeWrite {
             path: path.into(),
             source,
@@ -245,8 +252,10 @@ impl ConfigfsVkms {
         let inst = self.root.join(name);
 
         if !inst.exists() {
+            log::trace!("remove({name}): instance doesn't exist, no-op");
             return Ok(());
         }
+        log::debug!("removing {name}");
 
         // Step 1: graceful disconnect on every connector.
         inst.join("connectors").entries().for_each(|entry| {
@@ -318,10 +327,15 @@ impl DisplayBackend for ConfigfsVkms {
 
     /// Create a vkms instance from intent.
     fn create(&self, spec: &DisplaySpec) -> Result<CreateOutcome> {
+        log::debug!(
+            "creating vkms instance for {}x{}@{}Hz",
+            spec.width, spec.height, spec.refresh_hz
+        );
         self.check_available()?;
 
         let name = self.next_free_name()?;
         let instance_index = Self::instance_index_from_name(&name).unwrap_or(0);
+        log::debug!("allocated name {name}");
 
         let edid_bytes = edid::build(&edid::EdidSpec {
             width: spec.width,
@@ -329,10 +343,16 @@ impl DisplayBackend for ConfigfsVkms {
             refresh_hz: spec.refresh_hz,
             instance_index,
         })?;
+        log::debug!("generated {} bytes of EDID", edid_bytes.len());
 
         let feature_acceptance = self.build(&name, &edid_bytes).inspect_err(|_| {
             let _ = self.remove(&name);
         })?;
+
+        log::info!(
+            "created {name} ({}x{}@{}Hz, edid_applied={})",
+            spec.width, spec.height, spec.refresh_hz, feature_acceptance.edid_applied
+        );
 
         Ok(CreateOutcome {
             handle: DisplayHandle {
@@ -344,6 +364,7 @@ impl DisplayBackend for ConfigfsVkms {
     }
 
     fn destroy(&self, handle: &DisplayHandle) -> Result<()> {
+        log::info!("destroying {}", handle.local_id);
         self.remove(&handle.local_id)
     }
 
