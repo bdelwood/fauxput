@@ -9,6 +9,7 @@ rust-version = "1.94"
 [dependencies]
 anyhow = "1.0.102"
 env_logger = "0.11.10"
+indexmap = "2.14.0"
 libc = "0.2.186"
 log = "0.4.29"
 # 0.2.0 on crates.io is missing pub re-exports
@@ -17,7 +18,10 @@ log = "0.4.29"
 redid = { git = "https://github.com/mripard/redid", rev = "4956848250954bafb57857fa5455a34563cb61cb" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.18"
+wayland-client = "0.31.14"
+wayland-protocols-plasma = { version = "0.3.12", features = ["client"] }
 
 [build-dependencies]
 bindgen = "0.72.1"
@@ -25,3 +29,10 @@ pkg-config = "0.3.33"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Override the published `wayland-protocols-plasma` to use my fork that has
+# the KDE plasma-wayland-protocols submodule bumped to a recent revision
+[patch.crates-io]
+wayland-client = { git = "https://github.com/bdelwood/wayland-rs", branch = "feat/plasma-protocols-bump" }
+wayland-protocols = { git = "https://github.com/bdelwood/wayland-rs", branch = "feat/plasma-protocols-bump" }
+wayland-protocols-plasma = { git = "https://github.com/bdelwood/wayland-rs", branch = "feat/plasma-protocols-bump" }

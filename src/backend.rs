@@ -7,7 +7,7 @@ pub mod configfs_vkms;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Result, edid};
+use crate::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendCapabilities {

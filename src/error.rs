@@ -19,6 +19,12 @@ pub enum Error {
     #[error(transparent)]
     Edid(#[from] crate::edid::EdidError),
 
+    #[error(transparent)]
+    Compositor(#[from] crate::compositor::CompositorError),
+
+    #[error(transparent)]
+    Plan(#[from] crate::compositor::PlanError),
+
     #[error("kernel rejected mkdir at {path}: {source}")]
     Mkdir {
         path: PathBuf,
