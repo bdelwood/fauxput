@@ -261,7 +261,7 @@ pub trait CompositorAdapter: Send {
     /// surface the new connector.
     fn wait_for_new_head(
         &mut self,
-        baseline_names: &HashSet<String>,
+        baseline: &HashSet<String>,
         timeout: Duration,
     ) -> Result<HeadState>;
 
@@ -484,7 +484,10 @@ mod tests {
             }),
             position: None,
         });
-        assert!(matches!(r, Err(Error::Plan(PlanError::InvalidMode { width: 0, .. }))));
+        assert!(matches!(
+            r,
+            Err(Error::Plan(PlanError::InvalidMode { width: 0, .. }))
+        ));
     }
 
     #[test]
