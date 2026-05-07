@@ -7,6 +7,7 @@ pub mod wlr;
 use std::collections::HashSet;
 use std::time::Duration;
 
+use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
 use strum::EnumDiscriminants;
 use thiserror::Error;
@@ -22,8 +23,8 @@ pub enum CompositorError {
         source: wayland_client::DispatchError,
     },
 
-    #[error("timed out after {timeout:?} waiting for {what}")]
-    Timeout { what: String, timeout: Duration },
+    #[error("timed out after {timeout:?} waiting for {reason}")]
+    Timeout { reason: String, timeout: Duration },
 
     #[error("compositor rejected output configuration ({reason})")]
     ApplyRejected { reason: &'static str },
@@ -82,7 +83,7 @@ pub enum Transform {
 /// Adapters can declare which they
 /// can honor with [`CompositorAdapter::supported_features`];
 /// the lifecycle layer then warns when a plan asks for one the chosen adapter can't d
-#[derive(Debug, Clone, PartialEq, Eq, Hash, EnumDiscriminants)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner, EnumDiscriminants)]
 #[strum_discriminants(name(FeatureKind))]
 #[strum_discriminants(derive(Hash, strum::Display))]
 #[strum_discriminants(strum(serialize_all = "snake_case"))]
@@ -93,11 +94,11 @@ pub enum Feature {
 }
 
 /// What a caller wants the compositor to do.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct OutputPlan {
-    enable: Vec<EnableOutput>,
-    disable: Vec<String>,
-    set_primary: Option<String>,
+    pub(crate) enables: Vec<EnableOutput>,
+    pub(crate) disables: Vec<String>,
+    pub(crate) features: Vec<Feature>,
 }
 
 impl OutputPlan {
@@ -105,23 +106,33 @@ impl OutputPlan {
         OutputPlanBuilder::default()
     }
 
-    pub fn enable(&self) -> &[EnableOutput] {
-        &self.enable
-    }
-    pub fn disable(&self) -> &[String] {
-        &self.disable
-    }
-    pub fn set_primary(&self) -> Option<&str> {
-        self.set_primary.as_deref()
+    /// True when applying this plan does nothing. Adapters can short-circuit.
+    pub fn is_empty(&self) -> bool {
+        self.enables.is_empty() && self.disables.is_empty() && self.features.is_empty()
     }
 
-    /// True when applying this plan is a no-op. Adapters can short-circuit.
-    pub fn is_empty(&self) -> bool {
-        self.enable.is_empty() && self.disable.is_empty() && self.set_primary.is_none()
+    /// What capabilities does this plan ask for?
+    pub fn requested_features(&self) -> HashSet<FeatureKind> {
+        self.features.iter().map(FeatureKind::from).collect()
+    }
+
+    /// Check unsupported features in adapters
+    pub fn unsupported_by(&self, adapter: &dyn CompositorAdapter) -> HashSet<FeatureKind> {
+        self.requested_features()
+            .difference(&adapter.supported_features())
+            .copied()
+            .collect()
+    }
+
+    pub(crate) fn primary(&self) -> Option<&str> {
+        self.features
+            .iter()
+            .find_map(Feature::as_primary)
+            .map(String::as_str)
     }
 }
 
-/// Use builder pattern for OutPut plan, so we bake in the expectations here.
+/// Use builder pattern for OutputPlan, so we bake in the expectations here.
 ///
 /// Example:
 /// ```ignore
@@ -131,27 +142,27 @@ impl OutputPlan {
 ///     .set_primary("DP-1")
 ///     .build();
 /// ```
-#[derive(Default, Debug, Clone)]
+#[derive(Default)]
 pub struct OutputPlanBuilder {
-    enable: Vec<EnableOutput>,
-    disable: Vec<String>,
-    set_primary: Option<String>,
-    seen_enable: HashSet<String>,
+    enables: Vec<EnableOutput>,
+    disables: Vec<String>,
+    features: Vec<Feature>,
+    seen_enables: HashSet<String>,
 }
 
 impl OutputPlanBuilder {
-    pub fn enable(mut self, output: EnableOutput) -> std::result::Result<Self, PlanError> {
+    pub fn enable(&mut self, output: EnableOutput) -> Result<&mut Self> {
         // must have a name
         if output.name.is_empty() {
-            return Err(PlanError::EmptyName);
+            return Err(PlanError::EmptyName.into());
         }
         // name must be unique
-        if self.disable.iter().any(|d| d == &output.name) {
-            return Err(PlanError::Conflict(output.name));
+        if self.disables.iter().any(|d| d == &output.name) {
+            return Err(PlanError::Conflict(output.name).into());
         }
         // only one can be enabled
-        if !self.seen_enable.insert(output.name.clone()) {
-            return Err(PlanError::DuplicateEnable(output.name));
+        if !self.seen_enables.insert(output.name.clone()) {
+            return Err(PlanError::DuplicateEnable(output.name).into());
         }
         // incompatible modes
         // nonpositive width, height, and refresh rate is nonsense
@@ -162,36 +173,47 @@ impl OutputPlanBuilder {
                 width: m.width,
                 height: m.height,
                 refresh: m.refresh_mhz,
-            });
+            }
+            .into());
         }
-        self.enable.push(output);
+        self.enables.push(output);
         Ok(self)
     }
 
-    pub fn disable(mut self, name: impl Into<String>) -> std::result::Result<Self, PlanError> {
+    pub fn disable(&mut self, name: impl Into<String>) -> Result<&mut Self> {
         let name = name.into();
         // must have name
         if name.is_empty() {
-            return Err(PlanError::EmptyName);
+            return Err(PlanError::EmptyName.into());
         }
         // can't disable
-        if self.seen_enable.contains(&name) {
-            return Err(PlanError::Conflict(name));
+        if self.seen_enables.contains(&name) {
+            return Err(PlanError::Conflict(name).into());
         }
-        self.disable.push(name);
+        self.disables.push(name);
         Ok(self)
     }
 
-    pub fn set_primary(mut self, name: impl Into<String>) -> Self {
-        self.set_primary = Some(name.into());
-        self
+    pub fn set_primary(&mut self, name: impl Into<String>) -> Result<&mut Self> {
+        let name = name.into();
+        if name.is_empty() {
+            return Err(PlanError::EmptyName.into());
+        }
+        if self.disables.iter().any(|d| d == &name) {
+            return Err(PlanError::Conflict(name).into());
+        }
+        // dedupe-by-kind: drop any existing Primary feature, then push the new one
+        self.features
+            .retain(|f| !matches!(f, Feature::Primary { .. }));
+        self.features.push(Feature::Primary { output_name: name });
+        Ok(self)
     }
 
     pub fn build(self) -> OutputPlan {
         OutputPlan {
-            enable: self.enable,
-            disable: self.disable,
-            set_primary: self.set_primary,
+            enables: self.enables,
+            disables: self.disables,
+            features: self.features,
         }
     }
 }
@@ -223,15 +245,13 @@ pub struct EnableOutput {
     pub position: Option<(i32, i32)>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CompositorCapabilities {
-    pub supports_primary: bool,
-    pub atomic_apply: bool,
-    // TODO: in the future: vrr, hdr
-}
+pub trait CompositorAdapter: Send {
+    fn name(&self) -> &'static str;
 
-pub trait CompositorAdaptor: Send {
-    fn capabilities(&self) -> CompositorCapabilities;
+    /// Set of features this adapter can honor. Diffed against
+    /// [`OutputPlan::requested_features`] by [`OutputPlan::unsupported_by`].
+    /// Returned by value
+    fn supported_features(&self) -> HashSet<FeatureKind>;
 
     /// Return every head the compositor currently advertises.
     fn snapshot(&mut self) -> Result<OutputSnapshot>;
