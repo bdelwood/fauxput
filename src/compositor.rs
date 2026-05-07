@@ -272,6 +272,7 @@ pub trait CompositorAdapter: Send {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
 
     #[test]
     fn snapshot_round_trips_through_serde() {
@@ -312,5 +313,185 @@ mod tests {
         let s = OutputSnapshot::default();
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(json, r#"{"heads":[]}"#);
+    }
+
+    /// Mock adapter for unit-testing `unsupported_by` without spinning up wayland.
+    struct MockAdapter {
+        supported: HashSet<FeatureKind>,
+    }
+
+    impl CompositorAdapter for MockAdapter {
+        fn name(&self) -> &'static str {
+            "mock"
+        }
+        fn supported_features(&self) -> HashSet<FeatureKind> {
+            self.supported.clone()
+        }
+        fn snapshot(&mut self) -> Result<OutputSnapshot> {
+            unimplemented!()
+        }
+        fn wait_for_new_head(&mut self, _: &HashSet<String>, _: Duration) -> Result<HeadState> {
+            unimplemented!()
+        }
+        fn apply(&mut self, _: &OutputPlan) -> Result<()> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn unsupported_lists_features_not_in_adapter_capabilities() {
+        let mut plan = OutputPlan::builder();
+        plan.set_primary("fauxput-0").unwrap();
+        let plan = plan.build();
+        let adapter = MockAdapter {
+            supported: HashSet::new(),
+        };
+        assert_eq!(
+            plan.unsupported_by(&adapter),
+            HashSet::from([FeatureKind::Primary])
+        );
+    }
+
+    #[test]
+    fn unsupported_empty_when_adapter_supports_request() {
+        let mut plan = OutputPlan::builder();
+        plan.set_primary("fauxput-0").unwrap();
+        let plan = plan.build();
+        let adapter = MockAdapter {
+            supported: HashSet::from([FeatureKind::Primary]),
+        };
+        assert!(plan.unsupported_by(&adapter).is_empty());
+    }
+
+    #[test]
+    fn empty_plan_has_no_unsupported_features() {
+        let plan = OutputPlan::builder().build();
+        let adapter = MockAdapter {
+            supported: HashSet::new(),
+        };
+        assert!(plan.unsupported_by(&adapter).is_empty());
+    }
+
+    #[test]
+    fn set_primary_accessor_returns_pushed_name() {
+        let mut plan = OutputPlan::builder();
+        plan.set_primary("DP-1").unwrap();
+        let plan = plan.build();
+        assert_eq!(plan.primary(), Some("DP-1"));
+    }
+
+    #[test]
+    fn set_primary_replaces_previous_value() {
+        let mut plan = OutputPlan::builder();
+        plan.set_primary("DP-1").unwrap();
+        plan.set_primary("DP-2").unwrap();
+        let plan = plan.build();
+        assert_eq!(plan.primary(), Some("DP-2"));
+    }
+
+    #[test]
+    fn requested_features_derives_from_features_vec() {
+        let empty = OutputPlan::builder().build();
+        assert!(empty.requested_features().is_empty());
+
+        let mut with_primary = OutputPlan::builder();
+        with_primary.set_primary("X").unwrap();
+        let with_primary = with_primary.build();
+        assert_eq!(
+            with_primary.requested_features(),
+            HashSet::from([FeatureKind::Primary])
+        );
+    }
+
+    #[test]
+    fn feature_kind_display_is_snake_case() {
+        assert_eq!(FeatureKind::Primary.to_string(), "primary");
+    }
+
+    // Tests to validate builder
+
+    #[test]
+    fn builder_rejects_empty_name_in_enable() {
+        let mut builder = OutputPlan::builder();
+        let r = builder.enable(EnableOutput {
+            name: String::new(),
+            mode: None,
+            position: None,
+        });
+        assert!(matches!(r, Err(Error::Plan(PlanError::EmptyName))));
+    }
+
+    #[test]
+    fn builder_rejects_empty_name_in_disable() {
+        let mut builder = OutputPlan::builder();
+        let r = builder.disable("");
+        assert!(matches!(r, Err(Error::Plan(PlanError::EmptyName))));
+    }
+
+    #[test]
+    fn builder_rejects_enable_disable_conflict() {
+        let mut builder = OutputPlan::builder();
+        builder.disable("DP-1").unwrap();
+        let r = builder.enable(EnableOutput {
+            name: "DP-1".into(),
+            mode: None,
+            position: None,
+        });
+        assert!(matches!(r, Err(Error::Plan(PlanError::Conflict(s))) if s == "DP-1"));
+    }
+
+    #[test]
+    fn builder_rejects_disable_enable_conflict() {
+        let mut builder = OutputPlan::builder();
+        builder
+            .enable(EnableOutput {
+                name: "DP-1".into(),
+                mode: None,
+                position: None,
+            })
+            .unwrap();
+        let r = builder.disable("DP-1");
+        assert!(matches!(r, Err(Error::Plan(PlanError::Conflict(s))) if s == "DP-1"));
+    }
+
+    #[test]
+    fn builder_rejects_duplicate_enable() {
+        let mut builder = OutputPlan::builder();
+        builder
+            .enable(EnableOutput {
+                name: "DP-1".into(),
+                mode: None,
+                position: None,
+            })
+            .unwrap();
+        let r = builder.enable(EnableOutput {
+            name: "DP-1".into(),
+            mode: None,
+            position: None,
+        });
+        assert!(matches!(r, Err(Error::Plan(PlanError::DuplicateEnable(s))) if s == "DP-1"));
+    }
+
+    #[test]
+    fn builder_rejects_invalid_mode() {
+        let mut builder = OutputPlan::builder();
+        let r = builder.enable(EnableOutput {
+            name: "DP-1".into(),
+            mode: Some(ModeInfo {
+                width: 0,
+                height: 1080,
+                refresh_mhz: 60_000,
+            }),
+            position: None,
+        });
+        assert!(matches!(r, Err(Error::Plan(PlanError::InvalidMode { width: 0, .. }))));
+    }
+
+    #[test]
+    fn builder_rejects_set_primary_conflicting_with_disable() {
+        let mut builder = OutputPlan::builder();
+        builder.disable("DP-1").unwrap();
+        let r = builder.set_primary("DP-1");
+        assert!(matches!(r, Err(Error::Plan(PlanError::Conflict(s))) if s == "DP-1"));
     }
 }
