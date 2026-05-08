@@ -506,3 +506,166 @@ impl TryFrom<i32> for Transform {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compositor::EnableOutput;
+
+    fn head(name: &str, enabled: bool) -> HeadState {
+        HeadState {
+            name: name.into(),
+            enabled,
+            mode: None,
+            position: None,
+            scale: None,
+            transform: None,
+        }
+    }
+
+    // No Wayland socket should be a soft miss (Ok(None)), not an error,
+    // so the lifecycle can fall through to the next adapter.
+    #[test]
+    fn connect_returns_none_when_no_wayland_display() {
+        let prev = std::env::var("WAYLAND_DISPLAY").ok();
+        unsafe {
+            std::env::remove_var("WAYLAND_DISPLAY");
+            std::env::remove_var("WAYLAND_SOCKET");
+        }
+        let result = KdeCompositor::connect();
+        // Restore before asserting so a panic doesn't leak into other tests.
+        unsafe {
+            if let Some(v) = prev {
+                std::env::set_var("WAYLAND_DISPLAY", v);
+            }
+        }
+        assert!(matches!(result, Ok(None)));
+    }
+
+    fn mode(width: i32, height: i32) -> ModeInfo {
+        ModeInfo {
+            width,
+            height,
+            refresh_mhz: 60_000,
+        }
+    }
+
+    // Three resolution rules in `Target::for_head`:
+    //   disable beats carry,
+    //   unmentioned heads carry their current state,
+    //   explicit enable overrides a head that's currently off.
+    #[test]
+    fn plan_policy_resolves_targets() {
+        let mode = ModeInfo {
+            width: 1920,
+            height: 1080,
+            refresh_mhz: 60_000,
+        };
+
+        // Two real heads on, one virtual head off.
+        let mut primary = head("DP-1", true);
+        primary.mode = Some(mode);
+        primary.position = Some((0, 0));
+        let mut secondary = head("DP-2", true);
+        secondary.mode = Some(mode);
+        secondary.position = Some((1920, 0));
+        let live = [primary.clone(), secondary.clone(), head("fauxput-0", false)];
+
+        // disable DP-1, enable fauxput-0, leave DP-2 unmentioned.
+        let mut plan = OutputPlan::builder();
+        plan.disable("DP-1").unwrap();
+        plan.enable(EnableOutput {
+            name: "fauxput-0".into(),
+            mode: Some(mode),
+            position: Some((100, 0)),
+        })
+        .unwrap();
+        plan.set_primary("DP-2").unwrap();
+        let plan = plan.build();
+
+        // DP-1: disable wins over current-on.
+        let target_primary = Target::for_head(&primary, &plan);
+        assert!(!target_primary.enabled, "disable should win over carry");
+
+        // DP-2: unmentioned, keep current state.
+        let target_secondary = Target::for_head(&secondary, &plan);
+        assert!(
+            target_secondary.enabled,
+            "unmentioned enabled head should carry"
+        );
+        assert_eq!(target_secondary.mode, secondary.mode);
+        assert_eq!(target_secondary.position, secondary.position);
+
+        // fauxput-0: explicit enable wins over current-off, plan's
+        // mode/position replace the head's defaults.
+        let target_virtual = Target::for_head(&live[2], &plan);
+        assert!(
+            target_virtual.enabled,
+            "explicit enable should override current disabled state"
+        );
+        assert_eq!(target_virtual.mode, Some(mode));
+        assert_eq!(target_virtual.position, Some((100, 0)));
+    }
+
+    // KDE carries transform as a raw i32. 0-7 maps to wl_output.transform;
+    // anything else round-trips as Err(value) instead of panicking.
+    #[test]
+    fn transform_decode_returns_err_for_unknown() {
+        assert_eq!(Transform::try_from(0), Ok(Transform::Normal));
+        assert_eq!(Transform::try_from(7), Ok(Transform::FlippedRot270));
+        assert_eq!(Transform::try_from(8), Err(8));
+        assert_eq!(Transform::try_from(-1), Err(-1));
+    }
+
+    // Device properties trickle in across events; only after `done` is the
+    // snapshot coherent. `live_heads` filters on `done_seen` so callers
+    // never observe a half-initialized device.
+    #[test]
+    fn live_heads_excludes_devices_without_done() {
+        let mut s = State::default();
+        // A: fully initialized.
+        s.devices.insert(
+            1,
+            Device {
+                name: Some("A".into()),
+                done_seen: true,
+                current_mode: Some(10),
+                ..Default::default()
+            },
+        );
+        // B: mid-initialization, no `done` yet.
+        s.devices.insert(
+            2,
+            Device {
+                name: Some("B".into()),
+                done_seen: false,
+                ..Default::default()
+            },
+        );
+        // Mode 10's parent is device 1; `head` resolves current_mode via this map.
+        s.modes.insert(
+            10,
+            (
+                1,
+                ModeData {
+                    proxy: None,
+                    info: ModeInfo {
+                        width: 1920,
+                        height: 1080,
+                        refresh_mhz: 60_000,
+                    },
+                },
+            ),
+        );
+
+        let heads = s.live_heads();
+        // B filtered out, A surfaces with its mode resolved.
+        assert_eq!(
+            heads.len(),
+            1,
+            "only done devices should project as live heads"
+        );
+        assert_eq!(heads[0].name, "A");
+        assert_eq!(heads[0].mode, Some(mode(1920, 1080)));
+    }
+}
