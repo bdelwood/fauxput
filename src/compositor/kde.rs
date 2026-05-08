@@ -142,11 +142,25 @@ impl CompositorAdapter for KdeCompositor {
         let live = self.session.state.live_heads();
         let plan = plan.clone();
 
+        // KDE's `set_priority` is 1-indexed
+        // 0 is unranked
+        let primary_name = plan.primary();
+        let mut next: u32 = if primary_name.is_some() { 2 } else { 1 };
+        let mut priorities = IndexMap::with_capacity(live.len());
+        for head in &live {
+            let priority = if Some(head.name.as_str()) == primary_name {
+                1
+            } else {
+                let p = next;
+                next += 1;
+                p
+            };
+            priorities.insert(head.name.clone(), priority);
+        }
+
         self.submit("apply", move |cfg, state| {
             let mut touched = 0;
 
-            let primary_name = plan.primary();
-            let mut next: u32 = if primary_name.is_some() { 2 } else { 1 };
             for head in &live {
                 let Some(proxy) = state.device_by_name(&head.name) else {
                     continue;
@@ -175,15 +189,7 @@ impl CompositorAdapter for KdeCompositor {
                     touched += 1;
                 }
 
-                let priority = if Some(head.name.as_str()) == primary_name {
-                    1
-                } else {
-                    let p = next;
-                    next += 1;
-                    p
-                };
-
-                cfg.set_priority(&proxy, priority);
+                cfg.set_priority(&proxy, priorities[&head.name]);
                 touched += 1;
             }
             Ok(touched)
