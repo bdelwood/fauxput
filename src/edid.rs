@@ -5,6 +5,8 @@
 pub mod timing;
 
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use redid::{
@@ -57,12 +59,13 @@ impl<T, E: fmt::Display> EdidCtx<T> for std::result::Result<T, E> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EdidSpec {
     pub width: u32,
     pub height: u32,
     pub refresh_hz: u32,
     // used for both EDID serial num and product name string (ie `fauxput-N`)
+    // Lifecycle callers pass 0 as placeholder; configfs-vkms re-derives.
     pub instance_index: u32,
 }
 

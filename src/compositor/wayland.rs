@@ -11,7 +11,7 @@ use crate::compositor::CompositorError;
 pub struct WaylandSession<S> {
     #[allow(dead_code)]
     conn: Connection,
-    qh: QueueHandle<S>,
+    qhandle: QueueHandle<S>,
     eq: EventQueue<S>,
     pub state: S,
 }
@@ -23,10 +23,10 @@ impl<S: Default + 'static> WaylandSession<S> {
             Err(_) => return Ok(None),
         };
         let eq = conn.new_event_queue::<S>();
-        let qh = eq.handle();
+        let qhandle = eq.handle();
         Ok(Some(Self {
             conn,
-            qh,
+            qhandle,
             eq,
             state: S::default(),
         }))
@@ -38,11 +38,11 @@ impl<S: 'static> WaylandSession<S> {
     where
         S: Dispatch<wl_registry::WlRegistry, ()>,
     {
-        self.conn.display().get_registry(&self.qh, ())
+        self.conn.display().get_registry(&self.qhandle, ())
     }
 
-    pub fn qh(&self) -> &QueueHandle<S> {
-        &self.qh
+    pub fn qhandle(&self) -> &QueueHandle<S> {
+        &self.qhandle
     }
 
     pub fn roundtrip(&mut self, ctx: &'static str) -> Result<()> {

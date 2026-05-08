@@ -8,19 +8,12 @@ pub mod configfs_vkms;
 use serde::{Deserialize, Serialize};
 
 use crate::Result;
+use crate::edid::EdidSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendCapabilities {
     pub max_displays: u32,
     pub supports_dynamic_edid: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DisplaySpec {
-    pub width: u32,
-    pub height: u32,
-    pub refresh_hz: u32,
-    pub instance_index: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,8 +51,10 @@ pub trait DisplayBackend: Send + Sync {
 
     fn capabilities(&self) -> BackendCapabilities;
 
-    /// Create a virtual display matching `spec`.
-    fn create(&self, spec: &DisplaySpec) -> Result<CreateOutcome>;
+    /// Create a virtual display matching `spec`. Callers pass
+    /// `spec.instance_index = 0` as a placeholder; backends that allocate
+    /// by slot (configfs-vkms) re-derive the real value internally.
+    fn create(&self, spec: &EdidSpec) -> Result<CreateOutcome>;
 
     /// Tear down the display identified by `handle`. Safe to call when
     fn destroy(&self, handle: &DisplayHandle) -> Result<()>;

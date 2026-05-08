@@ -46,6 +46,26 @@ pub struct OutputSnapshot {
     pub heads: Vec<HeadState>,
 }
 
+impl OutputSnapshot {
+    /// Project enabled heads into [`EnableOutput`] requests carrying their
+    /// current mode + position. Heads without both fields are skipped.
+    pub fn active_enables(&self) -> Vec<EnableOutput> {
+        self.heads
+            .iter()
+            .filter(|h| h.enabled)
+            .filter_map(|h| {
+                let mode = h.mode?;
+                let position = h.position?;
+                Some(EnableOutput {
+                    name: h.name.clone(),
+                    mode: Some(mode),
+                    position: Some(position),
+                })
+            })
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HeadState {
     // slug under `/sys/class/drm/`
@@ -57,12 +77,29 @@ pub struct HeadState {
     pub transform: Option<Transform>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModeInfo {
     pub width: i32,
     pub height: i32,
     // wlr_output_mode uses mHz
     pub refresh_mhz: i32,
+}
+
+/// Intermediate mode-tracking record shared by both wayland adapters.
+/// Generic over the per-protocol mode proxy type. `info` defaults to
+/// all-zeros and is filled in by Width/Height/Refresh events.
+pub(crate) struct OutputMode<P> {
+    pub proxy: Option<P>,
+    pub info: ModeInfo,
+}
+
+impl<P> Default for OutputMode<P> {
+    fn default() -> Self {
+        Self {
+            proxy: None,
+            info: ModeInfo::default(),
+        }
+    }
 }
 
 /// Mirrors `wl_output.transform``
@@ -191,6 +228,31 @@ impl OutputPlanBuilder {
             return Err(PlanError::Conflict(name).into());
         }
         self.disables.push(name);
+        Ok(self)
+    }
+
+    /// Bulk variant of [`enable`](Self::enable). Fail-fast on the first invalid
+    /// entry.
+    pub fn enable_all<I>(&mut self, items: I) -> Result<&mut Self>
+    where
+        I: IntoIterator<Item = EnableOutput>,
+    {
+        for item in items {
+            self.enable(item)?;
+        }
+        Ok(self)
+    }
+
+    /// Bulk variant of [`disable`](Self::disable). Fail-fast on the first
+    /// invalid entry.
+    pub fn disable_all<I, S>(&mut self, items: I) -> Result<&mut Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        for item in items {
+            self.disable(item)?;
+        }
         Ok(self)
     }
 

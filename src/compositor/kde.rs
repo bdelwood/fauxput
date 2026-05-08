@@ -1,6 +1,6 @@
 //! KDE/Plasma `kde_output_management_v2` driver.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use indexmap::IndexMap;
 use std::time::Duration;
@@ -18,7 +18,7 @@ use wayland_protocols_plasma::output_management::v2::client::{
 use crate::Result;
 use crate::compositor::wayland::WaylandSession;
 use crate::compositor::{
-    CompositorAdapter, CompositorError, FeatureKind, HeadState, ModeInfo, OutputPlan,
+    CompositorAdapter, CompositorError, FeatureKind, HeadState, ModeInfo, OutputMode, OutputPlan,
     OutputSnapshot, Transform,
 };
 
@@ -26,6 +26,9 @@ use crate::compositor::{
 // we're not doing anything fancy, timeout after short time
 const APPLY_TIMEOUT: Duration = Duration::from_secs(5);
 const HEAD_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+const MGMT_VERSION: u32 = 19;
+const DEVICE_VERSION: u32 = 20;
 
 pub struct KdeCompositor {
     session: WaylandSession<State>,
@@ -60,7 +63,9 @@ impl KdeCompositor {
         F: FnOnce(&KdeOutputConfigurationV2, &State) -> Result<usize>,
     {
         // pass in empty userdata; don't need it
-        let cfg = self.manager.create_configuration(self.session.qh(), ());
+        let cfg = self
+            .manager
+            .create_configuration(self.session.qhandle(), ());
         let touched = populate(&cfg, &self.session.state)?;
 
         if touched == 0 {
@@ -194,22 +199,25 @@ struct Target {
 
 impl Target {
     fn for_head(head: &HeadState, plan: &OutputPlan) -> Self {
-        todo!()
+        let enable_entry = plan.enables.iter().find(|entry| entry.name == head.name);
+        let disabled = plan.disables.iter().any(|name| name == &head.name);
+        Self {
+            enabled: !disabled && (enable_entry.is_some() || head.enabled),
+            mode: enable_entry.and_then(|entry| entry.mode).or(head.mode),
+            position: enable_entry
+                .and_then(|entry| entry.position)
+                .or(head.position),
+        }
     }
-}
-
-// TODO: refactor this
-fn compute_priorities(plan: &OutputPlan, live: &[HeadState]) -> HashMap<String, u32> {
-    todo!("implement")
 }
 
 #[derive(Default)]
 struct State {
     manager: Option<KdeOutputManagementV2>,
-    managet_registry_name: Option<u32>,
+    manager_registry_name: Option<u32>,
     manager_alive: bool,
     devices: IndexMap<u32, Device>,
-    modes: HashMap<u32, (u32, ModeData)>,
+    modes: IndexMap<u32, (u32, ModeData)>,
     apply_result: ApplyResult,
     pending_failure_reason: Option<String>,
 }
@@ -228,14 +236,7 @@ struct Device {
     done_seen: bool,
 }
 
-#[derive(Default)]
-struct ModeData {
-    proxy: Option<KdeOutputDeviceModeV2>,
-    width: i32,
-    height: i32,
-    refresh_mhz: i32,
-    finished: bool,
-}
+type ModeData = OutputMode<KdeOutputDeviceModeV2>;
 
 #[derive(Default, PartialEq, Eq)]
 enum ApplyResult {
@@ -260,11 +261,7 @@ impl State {
         let mode = device
             .current_mode
             .and_then(|id| self.modes.get(&id))
-            .map(|(_, mode_data)| ModeInfo {
-                width: mode_data.width,
-                height: mode_data.height,
-                refresh_mhz: mode_data.refresh_mhz,
-            });
+            .map(|(_, mode_data)| mode_data.info);
 
         HeadState {
             name: device.name.clone().unwrap_or_default(),
@@ -284,30 +281,228 @@ impl State {
     }
 
     fn find_mode_proxy(&self, device_name: &str, want: ModeInfo) -> Option<KdeOutputDeviceModeV2> {
-        todo!()
+        let device_id = self
+            .devices
+            .iter()
+            .find(|(_, device)| device.name.as_deref() == Some(device_name))
+            .map(|(id, _)| *id)?;
+
+        self.modes
+            .iter()
+            .find(|(_, (parent, mode_data))| {
+                *parent == device_id
+                    && mode_data.info.width == want.width
+                    && mode_data.info.height == want.height
+                    && (mode_data.info.refresh_mhz - want.refresh_mhz) < 100
+            })
+            .and_then(|(_, (_, mode_data))| mode_data.proxy.clone())
     }
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(
         state: &mut Self,
-        proxy: &wl_registry::WlRegistry,
+        registry: &wl_registry::WlRegistry,
         event: <wl_registry::WlRegistry as Proxy>::Event,
-        data: &(),
-        conn: &Connection,
+        _data: &(),
+        _conn: &Connection,
         qhandle: &QueueHandle<Self>,
     ) {
+        match event {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } => match interface.as_str() {
+                "kde_output_management_v2" => {
+                    let bind_version = version.min(MGMT_VERSION);
+                    state.manager = Some(registry.bind::<KdeOutputManagementV2, _, _>(
+                        name,
+                        bind_version,
+                        qhandle,
+                        (),
+                    ));
+                    state.manager_registry_name = Some(name);
+                }
+                "kde_output_device_v2" => {
+                    let bind_version = version.min(DEVICE_VERSION);
+                    let device =
+                        registry.bind::<KdeOutputDeviceV2, _, _>(name, bind_version, qhandle, ());
+                    let id = device.id().protocol_id();
+                    let entry = state.devices.entry(id).or_default();
+                    entry.registry_name = Some(name);
+                    entry.proxy = Some(device);
+                }
+                _ => {}
+            },
+            wl_registry::Event::GlobalRemove { name } => {
+                if state.manager_registry_name == Some(name) {
+                    state.manager_alive = false;
+                    state.manager_registry_name = None;
+                    return;
+                }
+                if let Some(device_id) = state
+                    .devices
+                    .iter()
+                    .find(|(_, device)| device.registry_name == Some(name))
+                    .map(|(id, _)| *id)
+                {
+                    state.devices.shift_remove(&device_id);
+                    state.modes.retain(|_, (parent, _)| *parent != device_id);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<KdeOutputManagementV2, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &KdeOutputManagementV2,
+        _event: <KdeOutputManagementV2 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        // do nothing here
+    }
+}
+
+impl Dispatch<KdeOutputDeviceV2, ()> for State {
+    wayland_client::event_created_child!(State, KdeOutputDeviceV2, [
+        2 => (KdeOutputDeviceModeV2, ()),
+    ]);
+
+    fn event(
+        state: &mut Self,
+        device: &KdeOutputDeviceV2,
+        event: <KdeOutputDeviceV2 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandleandle: &QueueHandle<Self>,
+    ) {
+        use kde_output_device_v2::Event::*;
+
+        let device_id = device.id().protocol_id();
+        let entry = state.devices.entry(device_id).or_default();
+        match event {
+            Name { name } => entry.name = Some(name),
+            Enabled { enabled } => entry.enabled = enabled != 0,
+            CurrentMode { mode } => entry.current_mode = Some(mode.id().protocol_id()),
+            Geometry {
+                x, y, transform, ..
+            } => {
+                entry.position = Some((x, y));
+                entry.transform = Transform::try_from(transform).ok();
+            }
+            Scale { factor } => {
+                entry.scale = {
+                    let snap_scale = (factor * 120.0).round() / 120.0;
+                    Some(snap_scale)
+                }
+            }
+            Mode { mode } => {
+                let mode_id = mode.id().protocol_id();
+                let mode_entry = state
+                    .modes
+                    .entry(mode_id)
+                    .or_insert_with(|| (device_id, ModeData::default()));
+                mode_entry.0 = device_id;
+                mode_entry.1.proxy = Some(mode);
+
+                if entry.current_mode.is_none() {
+                    entry.current_mode = Some(mode_id);
+                }
+            }
+            Done => entry.done_seen = true,
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<KdeOutputDeviceModeV2, ()> for State {
+    fn event(
+        state: &mut Self,
+        mode: &KdeOutputDeviceModeV2,
+        event: <KdeOutputDeviceModeV2 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandleandle: &QueueHandle<Self>,
+    ) {
+        use kde_output_device_mode_v2::Event::*;
+        let mode_id = mode.id().protocol_id();
+
+        if matches!(event, Removed) {
+            let parent_id = state.modes.get(&mode_id).map(|(parent, _)| *parent);
+            state.modes.shift_remove(&mode_id);
+            if let Some(parent_id) = parent_id
+                && let Some(device) = state.devices.get_mut(&parent_id)
+                && device.current_mode == Some(mode_id)
+            {
+                device.current_mode = state
+                    .modes
+                    .iter()
+                    .find(|(_, (parent, _))| *parent == parent_id)
+                    .map(|(other_mode_id, _)| *other_mode_id);
+            }
+            return;
+        }
+        let entry = &mut state
+            .modes
+            .entry(mode_id)
+            .or_insert_with(|| (0, ModeData::default()))
+            .1;
+
+        match event {
+            Size { width, height } => {
+                entry.info.width = width;
+                entry.info.height = height;
+            }
+            Refresh { refresh } => entry.info.refresh_mhz = refresh,
+
+            Removed => unreachable!(),
+            _ => {}
+        }
     }
 }
 
 impl Dispatch<KdeOutputConfigurationV2, ()> for State {
     fn event(
         state: &mut Self,
-        proxy: &KdeOutputConfigurationV2,
+        _proxy: &KdeOutputConfigurationV2,
         event: <KdeOutputConfigurationV2 as Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &QueueHandle<Self>,
+        _data: &(),
+        _conn: &Connection,
+        _qhandleandle: &QueueHandle<Self>,
     ) {
+        use kde_output_configuration_v2::Event::*;
+        match event {
+            FailureReason { reason } => state.pending_failure_reason = Some(reason),
+            Applied => state.apply_result = ApplyResult::Applied,
+            Failed => {
+                state.apply_result = ApplyResult::Failed {
+                    reason: state.pending_failure_reason.take(),
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl TryFrom<i32> for Transform {
+    type Error = i32;
+    fn try_from(value: i32) -> std::result::Result<Self, Self::Error> {
+        Ok(match value {
+            0 => Transform::Normal,
+            1 => Transform::Rot90,
+            2 => Transform::Rot180,
+            3 => Transform::Rot270,
+            4 => Transform::Flipped,
+            5 => Transform::FlippedRot90,
+            6 => Transform::FlippedRot180,
+            7 => Transform::FlippedRot270,
+            _ => return Err(value),
+        })
     }
 }

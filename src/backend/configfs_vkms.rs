@@ -13,10 +13,8 @@
 use std::os::unix::fs as unix_fs;
 use std::{fs, path::Path, path::PathBuf};
 
-use crate::backend::{
-    BackendCapabilities, CreateOutcome, DisplayBackend, DisplayHandle, DisplaySpec,
-};
-use crate::edid;
+use crate::backend::{BackendCapabilities, CreateOutcome, DisplayBackend, DisplayHandle};
+use crate::edid::{self, EdidSpec};
 use crate::{Error, Result, backend::FeatureAcceptance};
 
 pub const BACKEND_ID: &str = "configfs-vkms";
@@ -234,7 +232,7 @@ impl ConfigfsVkms {
     /// in safe order. Trusts configfs's auto-management of attribute dirs.
     ///
     /// Order matters:
-    ///   1. status=disconnected on every connector . This fires a normal DRM
+    ///   1. status=disconnected on every connector. This fires a normal DRM
     ///      hot-unplug event so compositors handle it gracefully (I think this is the same
     ///      path as a real monitor cable being unplugged).
     ///   2. Brief pause so the compositor's hot-unplug handler can react
@@ -326,10 +324,12 @@ impl DisplayBackend for ConfigfsVkms {
     }
 
     /// Create a vkms instance from intent.
-    fn create(&self, spec: &DisplaySpec) -> Result<CreateOutcome> {
+    fn create(&self, spec: &EdidSpec) -> Result<CreateOutcome> {
         log::debug!(
             "creating vkms instance for {}x{}@{}Hz",
-            spec.width, spec.height, spec.refresh_hz
+            spec.width,
+            spec.height,
+            spec.refresh_hz
         );
         self.check_available()?;
 
@@ -337,11 +337,11 @@ impl DisplayBackend for ConfigfsVkms {
         let instance_index = Self::instance_index_from_name(&name).unwrap_or(0);
         log::debug!("allocated name {name}");
 
-        let edid_bytes = edid::build(&edid::EdidSpec {
-            width: spec.width,
-            height: spec.height,
-            refresh_hz: spec.refresh_hz,
+        // Caller's spec.instance_index is a placeholder; we re-derive from
+        // the slot we just picked.
+        let edid_bytes = edid::build(&EdidSpec {
             instance_index,
+            ..spec.clone()
         })?;
         log::debug!("generated {} bytes of EDID", edid_bytes.len());
 
@@ -351,7 +351,10 @@ impl DisplayBackend for ConfigfsVkms {
 
         log::info!(
             "created {name} ({}x{}@{}Hz, edid_applied={})",
-            spec.width, spec.height, spec.refresh_hz, feature_acceptance.edid_applied
+            spec.width,
+            spec.height,
+            spec.refresh_hz,
+            feature_acceptance.edid_applied
         );
 
         Ok(CreateOutcome {
@@ -524,7 +527,7 @@ mod tests {
             eprintln!("skipping: configfs-vkms not available (kernel module not loaded)");
             return;
         }
-        let outcome = match b.create(&DisplaySpec {
+        let outcome = match b.create(&EdidSpec {
             width: 1920,
             height: 1080,
             refresh_hz: 60,
