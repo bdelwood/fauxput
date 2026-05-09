@@ -2,10 +2,10 @@
 
 mod backend;
 mod compositor;
-mod edid;
+pub mod edid;
 pub mod error;
 pub mod lifecycle;
-mod state;
+pub mod state;
 
 // re-exports
 pub use error::{Error, Result};

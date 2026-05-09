@@ -1,7 +1,13 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use std::io;
+use std::io::Write;
 use std::process::ExitCode;
+
+use fauxput::edid::EdidSpec;
+use fauxput::lifecycle::{self, UpRequest};
+use fauxput::state::StateStore;
 
 #[derive(Parser)]
 #[command(name = "fauxput", version, about="Linux virtual display manager.", long_about=None)]
@@ -85,16 +91,92 @@ fn main() -> ExitCode {
     }
 }
 
-fn up(width: u32, height: u32, fps: u32, primary: bool, disable_real_outputs: bool) -> Result<()> {
-    todo!()
+fn up(
+    width: u32,
+    height: u32,
+    fps: u32,
+    make_primary: bool,
+    disable_real_outputs: bool,
+) -> Result<()> {
+    let outcome = lifecycle::up(&UpRequest {
+        spec: EdidSpec {
+            width,
+            height,
+            refresh_hz: fps,
+            instance_index: 0,
+        },
+        make_primary,
+        disable_real_outputs,
+    })
+    .with_context(|| format!("failed to create {width}x{height}@{fps} virtual display"))?;
+
+    println!(
+        "created {} ({}x{}@{}Hz requested)",
+        outcome.handle.local_id, width, height, fps
+    );
+
+    if !outcome.edid_applied {
+        println!();
+        println!("warning: this kernel's configfs-vkms interface does not expose a writable");
+        println!("         `edid` attribute on connectors");
+        println!("         falling back to its built-in default mode list");
+    }
+
+    if outcome.compositor_configured {
+        if let Some((x, y)) = outcome.compositor_position {
+            println!(
+                "configured {}x{}@{}Hz at position ({},{})",
+                width, height, fps, x, y
+            )
+        }
+        println!();
+        println!("tear down with: sudo fauxput down");
+    } else {
+        println!();
+        println!(
+            "hint: compositor auto-config skipped. No Wayland session? You can configure your compositor manually, e.g. `kscreen-doctor` for KDE:"
+        );
+        println!(
+            "kscreen-doctor output{}.enable output.{}.position.<x>.<y>",
+            outcome.handle.local_id, outcome.handle.local_id
+        );
+    }
+
+    Ok(())
 }
 
 fn down() -> Result<()> {
-    todo!()
+    let removed = lifecycle::down().context("failed to tear down virtual displays")?;
+
+    if removed == 0 {
+        println!("no active virtual displays");
+    } else {
+        println!("removed {removed} virtual display(s)")
+    }
+
+    Ok(())
 }
 
 fn status(json: bool) -> Result<()> {
-    todo!()
+    let state = lifecycle::status().context("failed to read state")?;
+
+    if json {
+        let mut stdout = io::stdout();
+        let mut handle = stdout.lock();
+        serde_json::to_writer_pretty(&mut stdout, &state)?;
+        writeln!(handle)?;
+        return Ok(());
+    }
+
+    if state.instances.is_empty() {
+        println!("no active virtual displays");
+        println!("state file: {:?}", StateStore::new().path());
+        return Ok(());
+    }
+
+    println!("{} active virtual display(s)", state.instances.len());
+
+    Ok(())
 }
 
 fn reset(yes: bool) -> Result<()> {
