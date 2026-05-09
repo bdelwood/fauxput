@@ -12,6 +12,16 @@ on:
       - "Cargo.lock"
       - "justfile"
       - ".github/workflows/docs.yaml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "build.rs"
+      - "docs/**"
+      - "README.md"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "justfile"
+      - ".github/workflows/docs.yaml"
   workflow_dispatch:
 
 permissions:
@@ -60,6 +70,8 @@ jobs:
 
   deploy:
     needs: build
+    # Only deploy to Pages on push to master, not on PR validation builds.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
