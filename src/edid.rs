@@ -268,20 +268,9 @@ mod tests {
         }
     }
 
+    /// Check EDID blocks are valid per canonical resolution
     #[test]
-    fn header_and_release_bytes() {
-        let bytes = build(&spec_60(1920, 1080)).unwrap();
-        assert_eq!(bytes.len(), 128);
-        assert_eq!(
-            &bytes[0..8],
-            &[0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00]
-        );
-        assert_eq!(&bytes[18..20], &[0x01, 0x04]);
-        assert!(checksum_ok(&bytes));
-    }
-
-    #[test]
-    fn all_canonical_modes() {
+    fn canonical_modes_satisfy_base_block_invariants() {
         for (w, h) in [
             (1920, 1080),
             (1920, 1200),
@@ -291,11 +280,18 @@ mod tests {
         ] {
             let bytes = build(&spec_60(w, h)).expect("valid mode");
             assert_eq!(bytes.len(), 128, "{w}x{h}");
+            assert_eq!(
+                &bytes[0..8],
+                &[0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00],
+                "header magic {w}x{h}"
+            );
+            assert_eq!(&bytes[18..20], &[0x01, 0x04], "EDID 1.4 version {w}x{h}");
             assert!(checksum_ok(&bytes), "checksum {w}x{h}");
             assert_eq!(bytes[126], 0, "extension count {w}x{h}");
         }
     }
 
+    /// Check we can disambiguate multiple fauxput heads
     #[test]
     fn instance_index_appears_in_serial_field() {
         let a = build(&EdidSpec {

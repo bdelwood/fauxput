@@ -176,7 +176,7 @@ impl OutputPlan {
 /// let plan = OutputPlan::builder()
 ///     .enable(EnableOutput { name: "DP-1".into(), mode: None, position: None })?
 ///     .disable("DP-2")?
-///     .set_primary("DP-1")
+///     .set_primary("DP-1")?
 ///     .build();
 /// ```
 #[derive(Default)]
@@ -188,7 +188,7 @@ pub struct OutputPlanBuilder {
 }
 
 impl OutputPlanBuilder {
-    pub fn enable(&mut self, output: EnableOutput) -> Result<&mut Self> {
+    pub fn enable(mut self, output: EnableOutput) -> Result<Self> {
         // must have a name
         if output.name.is_empty() {
             return Err(PlanError::EmptyName.into());
@@ -217,7 +217,7 @@ impl OutputPlanBuilder {
         Ok(self)
     }
 
-    pub fn disable(&mut self, name: impl Into<String>) -> Result<&mut Self> {
+    pub fn disable(mut self, name: impl Into<String>) -> Result<Self> {
         let name = name.into();
         // must have name
         if name.is_empty() {
@@ -233,30 +233,30 @@ impl OutputPlanBuilder {
 
     /// Bulk variant of [`enable`](Self::enable). Fail-fast on the first invalid
     /// entry.
-    pub fn enable_all<I>(&mut self, items: I) -> Result<&mut Self>
+    pub fn enable_all<I>(mut self, items: I) -> Result<Self>
     where
         I: IntoIterator<Item = EnableOutput>,
     {
         for item in items {
-            self.enable(item)?;
+            self = self.enable(item)?;
         }
         Ok(self)
     }
 
     /// Bulk variant of [`disable`](Self::disable). Fail-fast on the first
     /// invalid entry.
-    pub fn disable_all<I, S>(&mut self, items: I) -> Result<&mut Self>
+    pub fn disable_all<I, S>(mut self, items: I) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
         for item in items {
-            self.disable(item)?;
+            self = self.disable(item)?;
         }
         Ok(self)
     }
 
-    pub fn set_primary(&mut self, name: impl Into<String>) -> Result<&mut Self> {
+    pub fn set_primary(mut self, name: impl Into<String>) -> Result<Self> {
         let name = name.into();
         if name.is_empty() {
             return Err(PlanError::EmptyName.into());
@@ -336,48 +336,7 @@ mod tests {
     use super::*;
     use crate::Error;
 
-    #[test]
-    fn snapshot_round_trips_through_serde() {
-        let s = OutputSnapshot {
-            heads: vec![
-                HeadState {
-                    name: "DP-1".into(),
-                    enabled: true,
-                    mode: Some(ModeInfo {
-                        width: 3840,
-                        height: 2160,
-                        refresh_mhz: 60_000,
-                    }),
-                    position: Some((0, 0)),
-                    scale: Some(1.5),
-                    transform: Some(Transform::Normal),
-                },
-                HeadState {
-                    name: "fauxput-0".into(),
-                    enabled: false,
-                    mode: None,
-                    position: None,
-                    scale: None,
-                    transform: None,
-                },
-            ],
-        };
-        let json = serde_json::to_string(&s).unwrap();
-        let back: OutputSnapshot = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.heads.len(), 2);
-        assert_eq!(back.heads[0].name, "DP-1");
-        assert_eq!(back.heads[0].mode.unwrap().width, 3840);
-        assert!(!back.heads[1].enabled);
-    }
-
-    #[test]
-    fn empty_snapshot_serializes() {
-        let s = OutputSnapshot::default();
-        let json = serde_json::to_string(&s).unwrap();
-        assert_eq!(json, r#"{"heads":[]}"#);
-    }
-
-    /// Mock adapter for unit-testing `unsupported_by` without spinning up wayland.
+    /// Mock adapter for unit-testing capability diffing without spinning up Wayland.
     struct MockAdapter {
         supported: HashSet<FeatureKind>,
     }
@@ -400,144 +359,143 @@ mod tests {
         }
     }
 
-    #[test]
-    fn unsupported_lists_features_not_in_adapter_capabilities() {
-        let mut plan = OutputPlan::builder();
-        plan.set_primary("fauxput-0").unwrap();
-        let plan = plan.build();
-        let adapter = MockAdapter {
-            supported: HashSet::new(),
-        };
-        assert_eq!(
-            plan.unsupported_by(&adapter),
-            HashSet::from([FeatureKind::Primary])
-        );
+    fn enable(name: &str) -> EnableOutput {
+        EnableOutput {
+            name: name.into(),
+            mode: None,
+            position: None,
+        }
     }
 
+    /// OutputSnapshot must serde round-trip; empty snapshot serializes to a stable string
     #[test]
-    fn unsupported_empty_when_adapter_supports_request() {
-        let mut plan = OutputPlan::builder();
-        plan.set_primary("fauxput-0").unwrap();
-        let plan = plan.build();
-        let adapter = MockAdapter {
+    fn snapshot_serde_round_trip() {
+        assert_eq!(
+            serde_json::to_string(&OutputSnapshot::default()).unwrap(),
+            r#"{"heads":[]}"#
+        );
+
+        let s = OutputSnapshot {
+            heads: vec![
+                HeadState {
+                    name: "DP-1".into(),
+                    enabled: true,
+                    mode: Some(ModeInfo {
+                        width: 3840,
+                        height: 2160,
+                        refresh_mhz: 60_000,
+                    }),
+                    position: Some((0, 0)),
+                    scale: Some(1.5),
+                    transform: Some(Transform::Normal),
+                },
+                // All-None head exercises the `Option` fields' serde shape.
+                HeadState {
+                    name: "fauxput-0".into(),
+                    enabled: false,
+                    mode: None,
+                    position: None,
+                    scale: None,
+                    transform: None,
+                },
+            ],
+        };
+        let back: OutputSnapshot =
+            serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.heads.len(), 2);
+        assert_eq!(back.heads[0].name, "DP-1");
+        assert_eq!(back.heads[0].mode.unwrap().width, 3840);
+        assert!(!back.heads[1].enabled);
+    }
+
+    /// Capability diff = requested_features - supported_features.
+    /// Drives the "compositor doesn't support" warning in lifecycle.
+    #[test]
+    fn feature_capability_diff() {
+        assert_eq!(FeatureKind::Primary.to_string(), "primary");
+
+        // Empty plan: nothing requested, nothing unsupported.
+        let empty = OutputPlan::builder().build();
+        let no_caps = MockAdapter {
+            supported: HashSet::new(),
+        };
+        assert!(empty.requested_features().is_empty());
+        assert!(empty.unsupported_by(&no_caps).is_empty());
+
+        let plan = OutputPlan::builder()
+            .set_primary("fauxput-0")
+            .unwrap()
+            .build();
+        assert_eq!(
+            plan.requested_features(),
+            HashSet::from([FeatureKind::Primary])
+        );
+
+        // Adapter lacks Primary: it lands in unsupported.
+        assert_eq!(
+            plan.unsupported_by(&no_caps),
+            HashSet::from([FeatureKind::Primary])
+        );
+
+        // Adapter has Primary: nothing unsupported.
+        let with_primary = MockAdapter {
             supported: HashSet::from([FeatureKind::Primary]),
         };
-        assert!(plan.unsupported_by(&adapter).is_empty());
+        assert!(plan.unsupported_by(&with_primary).is_empty());
     }
 
+    // `primary` projects the latest Feature::Primary out of the features Vec.
+    // set_primary must be idempotent under repeated calls
     #[test]
-    fn empty_plan_has_no_unsupported_features() {
-        let plan = OutputPlan::builder().build();
-        let adapter = MockAdapter {
-            supported: HashSet::new(),
-        };
-        assert!(plan.unsupported_by(&adapter).is_empty());
-    }
-
-    #[test]
-    fn set_primary_accessor_returns_pushed_name() {
-        let mut plan = OutputPlan::builder();
-        plan.set_primary("DP-1").unwrap();
-        let plan = plan.build();
-        assert_eq!(plan.primary(), Some("DP-1"));
-    }
-
-    #[test]
-    fn set_primary_replaces_previous_value() {
-        let mut plan = OutputPlan::builder();
-        plan.set_primary("DP-1").unwrap();
-        plan.set_primary("DP-2").unwrap();
-        let plan = plan.build();
+    fn primary_accessor_dedupes_and_replaces() {
+        let plan = OutputPlan::builder()
+            .set_primary("DP-1")
+            .unwrap()
+            .set_primary("DP-2")
+            .unwrap()
+            .build();
         assert_eq!(plan.primary(), Some("DP-2"));
-    }
-
-    #[test]
-    fn requested_features_derives_from_features_vec() {
-        let empty = OutputPlan::builder().build();
-        assert!(empty.requested_features().is_empty());
-
-        let mut with_primary = OutputPlan::builder();
-        with_primary.set_primary("X").unwrap();
-        let with_primary = with_primary.build();
+        // Single Primary feature survives?
         assert_eq!(
-            with_primary.requested_features(),
-            HashSet::from([FeatureKind::Primary])
+            plan.requested_features(),
+            HashSet::from([FeatureKind::Primary]),
+            "second set_primary must replace, not append"
         );
     }
 
+    /// One branch per builder invariant; new rules append a branch.
     #[test]
-    fn feature_kind_display_is_snake_case() {
-        assert_eq!(FeatureKind::Primary.to_string(), "primary");
-    }
-
-    // Tests to validate builder
-
-    #[test]
-    fn builder_rejects_empty_name_in_enable() {
-        let mut builder = OutputPlan::builder();
-        let r = builder.enable(EnableOutput {
+    fn builder_validation_rejects_invariants() {
+        let r = OutputPlan::builder().enable(EnableOutput {
             name: String::new(),
             mode: None,
             position: None,
         });
         assert!(matches!(r, Err(Error::Plan(PlanError::EmptyName))));
-    }
 
-    #[test]
-    fn builder_rejects_empty_name_in_disable() {
-        let mut builder = OutputPlan::builder();
-        let r = builder.disable("");
+        let r = OutputPlan::builder().disable("");
         assert!(matches!(r, Err(Error::Plan(PlanError::EmptyName))));
-    }
 
-    #[test]
-    fn builder_rejects_enable_disable_conflict() {
-        let mut builder = OutputPlan::builder();
-        builder.disable("DP-1").unwrap();
-        let r = builder.enable(EnableOutput {
-            name: "DP-1".into(),
-            mode: None,
-            position: None,
-        });
+        let r = OutputPlan::builder()
+            .disable("DP-1")
+            .unwrap()
+            .enable(enable("DP-1"));
         assert!(matches!(r, Err(Error::Plan(PlanError::Conflict(s))) if s == "DP-1"));
-    }
 
-    #[test]
-    fn builder_rejects_disable_enable_conflict() {
-        let mut builder = OutputPlan::builder();
-        builder
-            .enable(EnableOutput {
-                name: "DP-1".into(),
-                mode: None,
-                position: None,
-            })
-            .unwrap();
-        let r = builder.disable("DP-1");
+        // Symmetric to above: opposite arm of the conflict check.
+        let r = OutputPlan::builder()
+            .enable(enable("DP-1"))
+            .unwrap()
+            .disable("DP-1");
         assert!(matches!(r, Err(Error::Plan(PlanError::Conflict(s))) if s == "DP-1"));
-    }
 
-    #[test]
-    fn builder_rejects_duplicate_enable() {
-        let mut builder = OutputPlan::builder();
-        builder
-            .enable(EnableOutput {
-                name: "DP-1".into(),
-                mode: None,
-                position: None,
-            })
-            .unwrap();
-        let r = builder.enable(EnableOutput {
-            name: "DP-1".into(),
-            mode: None,
-            position: None,
-        });
+        let r = OutputPlan::builder()
+            .enable(enable("DP-1"))
+            .unwrap()
+            .enable(enable("DP-1"));
         assert!(matches!(r, Err(Error::Plan(PlanError::DuplicateEnable(s))) if s == "DP-1"));
-    }
 
-    #[test]
-    fn builder_rejects_invalid_mode() {
-        let mut builder = OutputPlan::builder();
-        let r = builder.enable(EnableOutput {
+        let r = OutputPlan::builder().enable(EnableOutput {
             name: "DP-1".into(),
             mode: Some(ModeInfo {
                 width: 0,
@@ -550,13 +508,12 @@ mod tests {
             r,
             Err(Error::Plan(PlanError::InvalidMode { width: 0, .. }))
         ));
-    }
 
-    #[test]
-    fn builder_rejects_set_primary_conflicting_with_disable() {
-        let mut builder = OutputPlan::builder();
-        builder.disable("DP-1").unwrap();
-        let r = builder.set_primary("DP-1");
+        // set_primary participates in the same conflict check as enable/disable.
+        let r = OutputPlan::builder()
+            .disable("DP-1")
+            .unwrap()
+            .set_primary("DP-1");
         assert!(matches!(r, Err(Error::Plan(PlanError::Conflict(s))) if s == "DP-1"));
     }
 }

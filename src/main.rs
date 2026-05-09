@@ -6,6 +6,7 @@ use std::io::Write;
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
+use fauxput::backend::DisplayBackend;
 use fauxput::backend::configfs_vkms::ConfigfsVkms;
 use fauxput::edid::EdidSpec;
 use fauxput::lifecycle::{self, UpRequest};
@@ -193,32 +194,33 @@ fn reset(yes: bool) -> Result<()> {
         let backend = ConfigfsVkms::new();
         let on_disk = backend.list().unwrap_or_default();
         if on_disk.is_empty() {
-            println!("nothing to reset")
+            println!("nothing to reset");
+            return Ok(());
         };
-        return Ok(());
-    }
-    eprintln!(
-        "this will force-remove {} fauxput-* instance(s) under {}:",
-        on_disk.len(),
-        fauxput::backend::configfs_vkms::CONFIGFS_VKMS_ROOT
-    );
 
-    for h in &on_disk {
-        eprintln!(" - {}", h.local_id);
-    }
+        eprintln!(
+            "this will force-remove {} fauxput-* instance(s) under {}:",
+            on_disk.len(),
+            fauxput::backend::configfs_vkms::CONFIGFS_VKMS_ROOT
+        );
 
-    if !io::stdin().is_terminal() {
-        anyhow::bail!("not an interactive shell. Use --yes to confirm non-interactively.");
-    }
-    let confirmed = Confirm::new()
-        .with_prompt("proceed?")
-        .default(false)
-        .interact()?;
+        for h in &on_disk {
+            eprintln!(" - {}", h.local_id);
+        }
 
-    if !confirmed {
-        eprintln!("aborted");
-        return Ok(());
-    };
+        if !io::stdin().is_terminal() {
+            anyhow::bail!("not an interactive shell. Use --yes to confirm non-interactively.");
+        }
+        let confirmed = Confirm::new()
+            .with_prompt("proceed?")
+            .default(false)
+            .interact()?;
+
+        if !confirmed {
+            eprintln!("aborted");
+            return Ok(());
+        };
+    }
 
     let removed = lifecycle::reset().context("reset failed")?;
     println!("reset removed {removed} instances(s)");

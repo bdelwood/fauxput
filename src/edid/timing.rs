@@ -132,16 +132,9 @@ mod tests {
             assert_eq!(t.pixel_clock_khz, pclk, "pclk for {w}x{h}");
             assert_eq!(t.h_sync_positive, h_pos, "h_sync polarity for {w}x{h}");
             assert_eq!(t.v_sync_positive, v_pos, "v_sync polarity for {w}x{h}");
-        }
-    }
 
-    #[test]
-    fn vertical_blanking_at_least_460us() {
-        for &(w, h) in &[(1920u32, 1080u32), (3840, 2160), (3840, 2400)] {
-            let t = cvt_rb_v1(w, h, 60).unwrap();
             let h_period_us = t.h_total() as f64 / t.pixel_clock_khz as f64 * 1000.0;
-            let v_blank_lines = (t.v_total() - t.v_active) as f64;
-            let v_blank_us = v_blank_lines * h_period_us;
+            let v_blank_us = (t.v_total() - t.v_active) as f64 * h_period_us;
             assert!(
                 v_blank_us >= 460.0,
                 "v_blank {v_blank_us:.1}us for {w}x{h} below CVT-RB minimum"
@@ -149,19 +142,17 @@ mod tests {
         }
     }
 
+    /// Silly inputs and over-DTD pixel clocks must error, not panic.
+    /// 4K @ 120 Hz needs ~1.1 GHz, beyond DTD's 655350 cap.
+    /// TODO: update when CTA extension lands.
     #[test]
-    fn rejects_pixel_clock_over_dtd_limit() {
-        // 4K @ 120 Hz needs ~1.1 GHz pixel clock
-        // TODO: update this when we implement CTA extension
-        let err = cvt_rb_v1(3840, 2160, 120).unwrap_err();
-        let msg = format!("{err}");
-        assert!(msg.contains("655350"), "got: {msg}");
-    }
-
-    #[test]
-    fn rejects_silly_inputs() {
+    fn rejects_invalid_inputs() {
         assert!(cvt_rb_v1(0, 0, 60).is_err());
         assert!(cvt_rb_v1(1920, 1080, 0).is_err());
         assert!(cvt_rb_v1(1920, 1080, 1000).is_err());
+
+        let err = cvt_rb_v1(3840, 2160, 120).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("655350"), "got: {msg}");
     }
 }

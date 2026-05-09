@@ -10,8 +10,7 @@ use crate::{
     Result,
     backend::{CreateOutcome, DisplayBackend, DisplayHandle, pick_backend},
     compositor::{
-        self, CompositorAdapter, EnableOutput, ModeInfo, OutputPlan, OutputPlanBuilder,
-        OutputSnapshot, kde::KdeCompositor,
+        CompositorAdapter, EnableOutput, ModeInfo, OutputPlan, OutputSnapshot, kde::KdeCompositor,
     },
     edid::EdidSpec,
     state::{ActiveState, InstanceRecord, LayoutChanges, StateStore},
@@ -195,9 +194,7 @@ impl<'a> Up<'a> {
         let mut enable = self.pre_create.active_enables();
         enable.push(self.req.as_enable(&head_name, (max_x, 0)));
 
-        let mut builder = OutputPlan::builder();
-        builder.enable_all(enable)?;
-        let plan = builder.build();
+        let plan = OutputPlan::builder().enable_all(enable)?.build();
         comp.apply(&plan)?;
 
         Ok((head_name, (max_x, 0)))
@@ -238,13 +235,12 @@ impl<'a> Up<'a> {
 
         enable.push(self.req.as_enable(new_head_name, new_head_position));
 
-        let mut builder = OutputPlan::builder();
-        builder
+        let mut builder = OutputPlan::builder()
             .enable_all(enable)?
             .disable_all(disabled_outputs.iter().cloned())?;
 
         if self.req.make_primary {
-            builder.set_primary(new_head_name.to_string())?;
+            builder = builder.set_primary(new_head_name.to_string())?;
         }
 
         let plan = builder.build();
@@ -328,10 +324,11 @@ impl Down {
             .unwrap_or_else(|| rec.handle.local_id.clone());
 
         let plan: Result<OutputPlan> = (|| {
-            let mut builder = OutputPlan::builder();
-            builder.enable_all(enables)?.disable(compositor_head_name)?;
+            let mut builder = OutputPlan::builder()
+                .enable_all(enables)?
+                .disable(compositor_head_name)?;
             if let Some(name) = &rec.layout_changes.previous_primary {
-                builder.set_primary(name.clone())?;
+                builder = builder.set_primary(name.clone())?;
             }
             Ok(builder.build())
         })();

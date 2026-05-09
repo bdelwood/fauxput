@@ -578,16 +578,18 @@ mod tests {
         let live = [primary.clone(), secondary.clone(), head("fauxput-0", false)];
 
         // disable DP-1, enable fauxput-0, leave DP-2 unmentioned.
-        let mut plan = OutputPlan::builder();
-        plan.disable("DP-1").unwrap();
-        plan.enable(EnableOutput {
-            name: "fauxput-0".into(),
-            mode: Some(mode),
-            position: Some((100, 0)),
-        })
-        .unwrap();
-        plan.set_primary("DP-2").unwrap();
-        let plan = plan.build();
+        let plan = OutputPlan::builder()
+            .disable("DP-1")
+            .unwrap()
+            .enable(EnableOutput {
+                name: "fauxput-0".into(),
+                mode: Some(mode),
+                position: Some((100, 0)),
+            })
+            .unwrap()
+            .set_primary("DP-2")
+            .unwrap()
+            .build();
 
         // DP-1: disable wins over current-on.
         let target_primary = Target::for_head(&primary, &plan);

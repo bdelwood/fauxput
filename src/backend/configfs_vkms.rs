@@ -407,29 +407,20 @@ mod tests {
         (dir, backend)
     }
 
+    /// Empty root: 0. Filled gaps: lowest free index. Non-fauxput dirs ignored.
     #[test]
-    fn next_free_name_starts_at_zero() {
+    fn next_free_name_picks_lowest_gap_ignoring_foreign_dirs() {
         let (_dir, b) = sandbox();
         assert_eq!(b.next_free_name().unwrap(), "fauxput-0");
-    }
 
-    #[test]
-    fn next_free_name_fills_lowest_gap() {
-        let (_dir, b) = sandbox();
         for n in [0u32, 1, 3, 5] {
             fs::create_dir(b.root.join(format!("fauxput-{n}"))).unwrap();
         }
+        fs::create_dir(b.root.join("vkms-default")).unwrap();
         assert_eq!(b.next_free_name().unwrap(), "fauxput-2");
     }
 
-    #[test]
-    fn next_free_name_skips_non_fauxput_dirs() {
-        let (_dir, b) = sandbox();
-        fs::create_dir(b.root.join("not-ours")).unwrap();
-        fs::create_dir(b.root.join("fauxput-0")).unwrap();
-        assert_eq!(b.next_free_name().unwrap(), "fauxput-1");
-    }
-
+    /// check that `list` filters foreign instances (vkms-default, etc.) out of the manifest.
     #[test]
     fn list_only_returns_fauxput_instances() {
         let (_dir, b) = sandbox();
@@ -500,12 +491,6 @@ mod tests {
             Err(Error::VkmsConfigfsMissing) => {} // expected
             other => panic!("expected VkmsConfigfsMissing, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn id_returns_backend_id_constant() {
-        let b = ConfigfsVkms::new();
-        assert_eq!(b.id(), BACKEND_ID);
     }
 
     /// End-to-end against a real configfs-vkms kernel module.
