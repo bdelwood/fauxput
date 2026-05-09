@@ -6,14 +6,14 @@
 [![AUR version][aur-img]][aur-url]
 [![License][license-img]][license-url]
 
-[ci-img]: https://img.shields.io/github/actions/workflow/status/bdelwood/fauxput/ci.yaml?branch=main&style=flat-square&label=CI
+[ci-img]: https://img.shields.io/github/actions/workflow/status/bdelwood/fauxput/ci.yaml?branch=master&style=flat-square&label=CI
 [ci-url]: https://github.com/bdelwood/fauxput/actions/workflows/ci.yaml
 [doc-img]: https://img.shields.io/badge/docs-fauxput-4d76ae?style=flat-square
 [doc-url]: https://bdelwood.github.io/fauxput/
 [aur-img]: https://img.shields.io/aur/version/fauxput?style=flat-square&label=AUR
 [aur-url]: https://aur.archlinux.org/packages/fauxput
 [license-img]: https://img.shields.io/badge/license-MIT-yellow?style=flat-square
-[license-url]: https://github.com/bdelwood/fauxput/blob/main/LICENSE
+[license-url]: https://github.com/bdelwood/fauxput/blob/master/LICENSE
 
 A cli for managing virtual displays on Wayland. Designed as a general-purpose virtual-display manager that integrates well with streaming hosts (Sunshine, Steam Remote Play).
 

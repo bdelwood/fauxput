@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  release-plz-release:
+    name: Tag + create GitHub release
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'bdelwood' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcvt-dev libwayland-dev libdrm-dev pkg-config
+
+      - name: Run release-plz release
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-plz-pr:
+    name: Open / update release PR
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'bdelwood' }}
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcvt-dev libwayland-dev libdrm-dev pkg-config
+
+      - name: Run release-plz PR
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
