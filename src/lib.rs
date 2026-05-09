@@ -1,9 +1,10 @@
 //! Library for `fauxput`
 
-pub mod backend;
-pub mod compositor;
-pub mod edid;
+mod backend;
+mod compositor;
+mod edid;
 pub mod error;
+pub mod lifecycle;
 mod state;
 
 // re-exports

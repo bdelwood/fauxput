@@ -25,6 +25,9 @@ pub enum Error {
     #[error(transparent)]
     Plan(#[from] crate::compositor::PlanError),
 
+    #[error(transparent)]
+    State(#[from] crate::state::StateError),
+
     #[error("kernel rejected mkdir at {path}: {source}")]
     Mkdir {
         path: PathBuf,
