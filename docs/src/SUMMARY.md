@@ -5,6 +5,8 @@
 # User Guide
 
 - [Kernel dependency: vkms-edid-dkms](./kernel-dependency.md)
+- [Streaming setup](./streaming-setup.md)
+- [Troubleshooting](./troubleshooting.md)
 
 ---
 

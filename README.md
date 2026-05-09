@@ -19,7 +19,100 @@ A cli for managing virtual displays on Wayland. Designed as a general-purpose vi
 
 ## But why?
 
-I was super annoyed that resolutions weren't being dynamically set by Sunshine clients. Luckily, with recent vkms work to support virtual EDID profiles, it's now possible to configure virtual displays properly. Sunshine recently added support for an xdg-portal-based capture backend, which opens up wider DE support. fauxput plumbs the two together: a Moonlight client at any resolution $\rightarrow$ a vkms connector created at exactly that resolution $\rightarrow$ portal capture streams it back.
+I was super annoyed that resolutions weren't being dynamically set by Sunshine clients. Luckily, with [recent vkms work to support virtual EDID profiles](https://indico.freedesktop.org/event/10/contributions/448/), it's now possible to configure virtual displays properly. Sunshine recently added support for an xdg-portal-based capture backend, which opens up wider DE support. fauxput plumbs the two together: a Moonlight client at any resolution $\rightarrow$ a vkms connector created at exactly that resolution $\rightarrow$ portal capture streams it back.
+
+## Installation
+
+### Prerequisites
+
+- Linux kernel $\geq$ 7.0 with `vkms`
+- A patched `vkms` with the EDID configfs interface. See the [docs](../docs/kernel-dependency.md) for details.
+- For streaming integration: Sunshine.
+    - Recommend using Sunshine $\geq$ 2026.4 which has a new portal capture backend that should work on any compositor that supports `xdg-desktop-portal`. 
+
+### Dependencies
+
+- `libcap`
+- `libxcvt`
+- `util-linux`
+- `wayland`
+
+
+### Build from source
+
+```bash
+cargo build --release
+```
+
+
+or with `cargo install`:
+
+```bash
+cargo install --path .
+```
+
+
+Optional, if you want to use with Sunshine:
+```bash
+sudo setcap cap_dac_override+ep path/to/binary/fauxput
+```
+
+### AUR
+
+```bash
+yay -S fauxput
+```
+
+
+## Quickstart
+
+
+Create a virtual display, make it the compositor's primary, and disables real outputs. Disabling real outputs can be useful to force the compositor to put newly launched windows onto the virtual display:
+
+```bash
+fauxput up --width 1920 --height 1080 --fps 60 --primary --disable-real-outputs
+```
+
+Check virtual display status:
+
+```bash
+fauxput status
+```
+Undo setup and tear everything down:
+```bash
+fauxput down
+```
+
+Force clean :
+```bash
+fauxput reset --yes
+```
+
+## DE / Sunshine support
+
+| Desktop | Status |
+|---|---|
+| KDE Plasma 6 | ✓ |
+| GNOME (Mutter) | planned |
+| wlroots (Sway, Hyprland, ...) | planned |
+
+
+Sunshine $\geq$ 2026.4 portal capture works on any of the above once the adapter is in place.
+
+## Documentation
+
+- [Streaming setup walkthrough](docs/streaming-setup.md) — wire fauxput into Sunshine + Moonlight
+- [System-level gotchas + working Sunshine recipe](docs/footguns.md)
+- [Kernel-side dependency](docs/kernel-dependency.md) — the `vkms-edid-dkms` patch series
+
+
+## TODO
+
+- [ ] Additional compositor support
+    - [ ] Mutter
+    - [ ] wlroots family
+- [ ] HDR & VRR
+- [ ] Preset profiles
 
 ## License
 
