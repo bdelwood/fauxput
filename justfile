@@ -63,6 +63,25 @@ docs: docs-rs docs-book
 docs-serve:
     cd docs && mdbook serve --open
 
+# Build the dev PKGBUILD.
+[group('pkg')]
+pkg:
+    mkdir -p .dev-pkg
+    cp packaging/arch/fauxput.install .dev-pkg/fauxput.install
+    sed \
+        -e 's|^source=.*|source=()|' \
+        -e 's|^sha256sums=.*|sha256sums=()|' \
+        -e 's|cd "$srcdir/$pkgname-$pkgver"|cd "{{ justfile_directory() }}"|g' \
+        packaging/arch/PKGBUILD > .dev-pkg/PKGBUILD
+    cd .dev-pkg && makepkg -f --noconfirm --nocheck
+
+# Build + install dev PKGBUILD.
+[group('pkg')]
+pkg-install: pkg
+    sudo pacman -U --noconfirm $(ls -1t .dev-pkg/fauxput-*.pkg.tar.zst | head -1)
+    fauxput reset --yes 2>/dev/null || true
+    @echo "==> done. Verify: getcap /usr/bin/fauxput"
+
 # use insmod to temporarily load patched vkms
 [group('vkms')]
 vkms-insmod:
@@ -78,3 +97,16 @@ vkms-dkms:
     sudo dkms install -m vkms-edid -v 0.1
     sudo modprobe -r vkms
     sudo modprobe vkms
+
+# helpers for quick testing
+[group('runtime')]
+up:
+    fauxput up --width 1920 --height 1080 --fps 60 --primary
+
+[group('runtime')]
+down:
+    fauxput down
+
+[group('runtime')]
+reset:
+    fauxput reset --yes
