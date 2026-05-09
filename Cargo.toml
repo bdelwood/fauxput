@@ -12,11 +12,11 @@ clap = { version = "4", features = ["derive"] }
 clap-verbosity-flag = "3"
 dialoguer = "0.12"
 enum-as-inner = "0.7"
+colored = "3"
 env_logger = "0.11"
 indexmap = "2"
 libc = "0.2"
 log = "0.4"
-owo-colors = { version = "4", features = ["supports-colors"] }
 # 0.2.0 on crates.io is missing pub re-exports
 # (EdidDetailedTimingPixelClock) that the EdidDescriptorDetailedTiming builder requires
 # TODO: pin to released version when this is fixed

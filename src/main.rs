@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use clap_verbosity_flag::{InfoLevel, Verbosity};
+use clap_verbosity_flag::{Verbosity, WarnLevel};
+use colored::Colorize;
 use dialoguer::Confirm;
 use std::io::Write;
 use std::io::{self, IsTerminal};
@@ -16,7 +17,7 @@ use fauxput::state::StateStore;
 #[command(name = "fauxput", version, about="Linux virtual display manager.", long_about=None)]
 struct Cli {
     #[command(flatten)]
-    verbose: Verbosity<InfoLevel>,
+    verbose: Verbosity<WarnLevel>,
 
     #[command(subcommand)]
     command: Commands,
@@ -88,7 +89,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("{}: {e:#}", "error");
+            eprintln!("{}: {e:#}", "error".red().bold());
             ExitCode::from(1)
         }
     }
@@ -114,13 +115,17 @@ fn up(
     .with_context(|| format!("failed to create {width}x{height}@{fps} virtual display"))?;
 
     println!(
-        "created {} ({}x{}@{}Hz requested)",
-        outcome.handle.local_id, width, height, fps
+        "{} {} ({width}x{height}@{fps}Hz requested)",
+        "created".green().bold(),
+        outcome.handle.local_id.bold(),
     );
 
     if !outcome.edid_applied {
         println!();
-        println!("warning: this kernel's configfs-vkms interface does not expose a writable");
+        println!(
+            "{} this kernel's configfs-vkms interface does not expose a writable",
+            "warning:".yellow().bold(),
+        );
         println!("         `edid` attribute on connectors");
         println!("         falling back to its built-in default mode list");
     }
@@ -128,20 +133,21 @@ fn up(
     if outcome.compositor_configured {
         if let Some((x, y)) = outcome.compositor_position {
             println!(
-                "configured {}x{}@{}Hz at position ({},{})",
-                width, height, fps, x, y
+                "{} {width}x{height}@{fps}Hz at position ({x},{y})",
+                "configured".green().bold(),
             )
         }
         println!();
-        println!("tear down with: sudo fauxput down");
+        println!("{} sudo fauxput down", "tear down with:".dimmed());
     } else {
         println!();
         println!(
-            "hint: compositor auto-config skipped. No Wayland session? You can configure your compositor manually, e.g. `kscreen-doctor` for KDE:"
+            "{} compositor auto-config skipped. No Wayland session? You can configure your compositor manually, e.g. `kscreen-doctor` for KDE:",
+            "hint:".cyan().bold(),
         );
         println!(
-            "kscreen-doctor output{}.enable output.{}.position.<x>.<y>",
-            outcome.handle.local_id, outcome.handle.local_id
+            "kscreen-doctor output.{0}.enable output.{0}.position.<x>.<y>",
+            outcome.handle.local_id,
         );
     }
 
@@ -152,9 +158,9 @@ fn down() -> Result<()> {
     let removed = lifecycle::down().context("failed to tear down virtual displays")?;
 
     if removed == 0 {
-        println!("no active virtual displays");
+        println!("{}", "no active virtual displays".dimmed());
     } else {
-        println!("removed {removed} virtual display(s)")
+        println!("{} {removed} virtual display(s)", "removed".green().bold());
     }
 
     Ok(())
@@ -172,17 +178,24 @@ fn status(json: bool) -> Result<()> {
     }
 
     if state.instances.is_empty() {
-        println!("no active virtual displays");
-        println!("state file: {:?}", StateStore::new().path());
+        println!("{}", "no active virtual displays".dimmed());
+        println!("{} {:?}", "state file:".dimmed(), StateStore::new().path(),);
         return Ok(());
     }
 
-    println!("{} active virtual display(s)", state.instances.len());
+    println!(
+        "{} active virtual display(s)",
+        state.instances.len().to_string().bold(),
+    );
 
     for rec in &state.instances {
         println!(
-            "  {} {}x{}@{}Hz [active]",
-            rec.handle.local_id, rec.spec.width, rec.spec.height, rec.spec.refresh_hz
+            "  {} {}x{}@{}Hz [{}]",
+            rec.handle.local_id.bold(),
+            rec.spec.width,
+            rec.spec.height,
+            rec.spec.refresh_hz,
+            "active".green(),
         );
     }
 
@@ -194,18 +207,19 @@ fn reset(yes: bool) -> Result<()> {
         let backend = ConfigfsVkms::new();
         let on_disk = backend.list().unwrap_or_default();
         if on_disk.is_empty() {
-            println!("nothing to reset");
+            println!("{}", "nothing to reset".dimmed());
             return Ok(());
         };
 
         eprintln!(
-            "this will force-remove {} fauxput-* instance(s) under {}:",
+            "{} this will force-remove {} fauxput-* instance(s) under {}:",
+            "warning:".yellow().bold(),
             on_disk.len(),
-            fauxput::backend::configfs_vkms::CONFIGFS_VKMS_ROOT
+            fauxput::backend::configfs_vkms::CONFIGFS_VKMS_ROOT,
         );
 
         for h in &on_disk {
-            eprintln!(" - {}", h.local_id);
+            eprintln!(" - {}", h.local_id.bold());
         }
 
         if !io::stdin().is_terminal() {
@@ -217,12 +231,12 @@ fn reset(yes: bool) -> Result<()> {
             .interact()?;
 
         if !confirmed {
-            eprintln!("aborted");
+            eprintln!("{}", "aborted".dimmed());
             return Ok(());
         };
     }
 
     let removed = lifecycle::reset().context("reset failed")?;
-    println!("reset removed {removed} instances(s)");
+    println!("{} {removed} instance(s)", "reset removed".green().bold(),);
     Ok(())
 }
