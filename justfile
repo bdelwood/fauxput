@@ -63,16 +63,18 @@ docs: docs-rs docs-book
 docs-serve:
     cd docs && mdbook serve --open
 
-# Build the dev PKGBUILD.
+# Build the dev PKGBUILD against the working tree.
 [group('pkg')]
 pkg:
     mkdir -p .dev-pkg
     cp packaging/arch/fauxput.install .dev-pkg/fauxput.install
-    sed \
-        -e 's|^source=.*|source=()|' \
-        -e 's|^sha256sums=.*|sha256sums=()|' \
-        -e 's|cd "$srcdir/$pkgname-$pkgver"|cd "{{ justfile_directory() }}"|g' \
-        packaging/arch/PKGBUILD > .dev-pkg/PKGBUILD
+    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
+        sed \
+            -e "s|^pkgver=__PLACEHOLDER__|pkgver=$VERSION|" \
+            -e 's|^source=.*|source=()|' \
+            -e 's|^sha256sums=.*|sha256sums=()|' \
+            -e 's|cd "$srcdir/$pkgname-$pkgver"|cd "{{ justfile_directory() }}"|g' \
+            packaging/arch/PKGBUILD > .dev-pkg/PKGBUILD
     cd .dev-pkg && makepkg -f --noconfirm --nocheck
 
 # Build + install dev PKGBUILD.
@@ -81,6 +83,23 @@ pkg-install: pkg
     sudo pacman -U --noconfirm $(ls -1t .dev-pkg/fauxput-*.pkg.tar.zst | head -1)
     fauxput reset --yes 2>/dev/null || true
     @echo "==> done. Verify: getcap /usr/bin/fauxput"
+
+# Sync the latest tag to the AUR repo and push (requires AUR_REPO env var).
+[group('pkg')]
+aur-sync:
+    @[ -n "${AUR_REPO:-}" ] || (echo "set AUR_REPO to your AUR clone path" && exit 1)
+    VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//') && \
+        echo "==> syncing v$VERSION to $AUR_REPO" && \
+        sed "s|^pkgver=__PLACEHOLDER__|pkgver=$VERSION|" \
+            packaging/arch/PKGBUILD > "$AUR_REPO/PKGBUILD" && \
+        cp packaging/arch/fauxput.install "$AUR_REPO/" && \
+        cd "$AUR_REPO" && \
+        updpkgsums && \
+        makepkg -f --noconfirm && \
+        makepkg --printsrcinfo > .SRCINFO && \
+        git add PKGBUILD fauxput.install .SRCINFO && \
+        git commit -m "Update to v$VERSION" && \
+        git push origin master
 
 # use insmod to temporarily load patched vkms
 [group('vkms')]
