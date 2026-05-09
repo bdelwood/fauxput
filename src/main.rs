@@ -107,6 +107,8 @@ fn up(
             width,
             height,
             refresh_hz: fps,
+            // Placeholder: the configfs-vkms backend re-derives this from
+            // the slot it allocates so the EDID serial matches the slug.
             instance_index: 0,
         },
         make_primary,
@@ -222,6 +224,7 @@ fn reset(yes: bool) -> Result<()> {
             eprintln!(" - {}", h.local_id.bold());
         }
 
+        // Refuse to silently default-no on a non-TTY
         if !io::stdin().is_terminal() {
             anyhow::bail!("not an interactive shell. Use --yes to confirm non-interactively.");
         }

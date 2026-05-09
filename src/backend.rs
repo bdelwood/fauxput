@@ -10,12 +10,15 @@ use serde::{Deserialize, Serialize};
 use crate::Result;
 use crate::edid::EdidSpec;
 
+/// Static backend capabilities, reported once at backend init. Used by the
+/// lifecycle layer to fail-fast on requests the backend can't satisfy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendCapabilities {
     pub max_displays: u32,
     pub supports_dynamic_edid: bool,
 }
 
+/// Opaque handle for a created display.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DisplayHandle {
     pub backend_id: String,
@@ -33,10 +36,12 @@ pub struct CreateOutcome {
     pub feature_acceptance: FeatureAcceptance,
 }
 
+/// Per-create record of which optional backend features the kernel actually
+/// honored. Lets the CLI warn the user about silent fallbacks.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FeatureAcceptance {
-    // True iff the kernel accepted the EDID write. False on backends or
-    /// kernels that fall back to default modes
+    /// True iff the kernel accepted the EDID write. False on backends or
+    /// kernels that fall back to default modes.
     pub edid_applied: bool,
 }
 

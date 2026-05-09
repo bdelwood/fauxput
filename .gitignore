@@ -14,6 +14,7 @@ rustc-ice-*.txt
 
 # mdbook build output
 /docs/book/
+public/
 
 # logs
 *.log

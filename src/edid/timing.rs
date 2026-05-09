@@ -11,6 +11,11 @@ mod ffi {
     include!(concat!(env!("OUT_DIR"), "/libxcvt.rs"));
 }
 
+/// Pixel-clock and sync timing for a single mode. Field naming follows the
+/// VESA Display Monitor Timing spec:
+/// - `*_active` is the visible region
+/// - `*_front_porch`/`*_sync_width`/`*_back_porch` are the blanking sub-intervals
+/// - `pixel_clock_khz` is the dot clock. Used to populate an EDID detailed-timing descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timing {
     pub h_active: u32,
@@ -27,14 +32,18 @@ pub struct Timing {
 }
 
 impl Timing {
+    /// Total horizontal pixels per line including blanking.
     pub fn h_total(&self) -> u32 {
         self.h_active + self.h_front_porch + self.h_sync_width + self.h_back_porch
     }
+    /// Total scanlines per frame including blanking.
     pub fn v_total(&self) -> u32 {
         self.v_active + self.v_front_porch + self.v_sync_width + self.v_back_porch
     }
 }
 
+/// Compute CVT-Reduced-Blanking v1 timing for `width × height @ refresh_hz`.
+/// Errors out on out-of-range inputs
 pub fn cvt_rb_v1(width: u32, height: u32, refresh_hz: u32) -> Result<Timing> {
     let invalid = |reason: &str| Error::InvalidTiming {
         width,

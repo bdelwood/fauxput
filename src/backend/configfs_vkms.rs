@@ -44,6 +44,7 @@ impl Op {
     }
 }
 
+/// Semantic names for the small set of byte payloads.
 #[derive(Copy, Clone, Debug)]
 enum Payload {
     Enabled,
@@ -116,6 +117,9 @@ impl ConfigfsVkms {
 
     fn next_free_name(&self) -> Result<String> {
         let used = self.existing_instance_indices()?;
+        // Find the lowest integer not present in the sorted index list by
+        // walking it sequentially and stopping at
+        // the first divergence.
         let next = used
             .iter()
             .copied()
