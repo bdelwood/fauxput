@@ -66,6 +66,8 @@ impl OutputSnapshot {
     }
 }
 
+/// One head as the compositor advertises it: the connector name plus the
+/// current mode, position, scale, and transform.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HeadState {
     // slug under `/sys/class/drm/`
@@ -77,6 +79,8 @@ pub struct HeadState {
     pub transform: Option<Transform>,
 }
 
+/// Resolution and refresh rate. Refresh is in milli-hertz to match the
+/// wlr-output-management wire format and avoid 59.94 / 60 rounding traps.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModeInfo {
     pub width: i32,
@@ -102,7 +106,7 @@ impl<P> Default for OutputMode<P> {
     }
 }
 
-/// Mirrors `wl_output.transform``
+/// Mirrors `wl_output.transform`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Transform {
@@ -116,10 +120,10 @@ pub enum Transform {
     FlippedRot270,
 }
 
-/// Capability category that a plan may exercise.
-/// Adapters can declare which they
-/// can honor with [`CompositorAdapter::supported_features`];
-/// the lifecycle layer then warns when a plan asks for one the chosen adapter can't d
+/// Capability category that a plan may exercise. Adapters declare which
+/// ones they can honor with [`CompositorAdapter::supported_features`]; the
+/// lifecycle layer then warns when a plan asks for one the chosen adapter
+/// can't satisfy.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner, EnumDiscriminants)]
 #[strum_discriminants(name(FeatureKind))]
 #[strum_discriminants(derive(Hash, strum::Display))]
@@ -278,15 +282,19 @@ impl OutputPlanBuilder {
 /// Errors associated with OutputPlan building
 #[derive(Debug, Error)]
 pub enum PlanError {
+    /// Same name landed in both the enable and disable lists.
     #[error("name `{0}` appears in both enable and disable")]
     Conflict(String),
 
+    /// Same name passed to `enable` twice.
     #[error("duplicate enable for name `{0}`")]
     DuplicateEnable(String),
 
+    /// An `enable`/`disable`/`set_primary` was called with `""`.
     #[error("EnableOutput has empty name")]
     EmptyName,
 
+    /// Mode dimensions or refresh were zero or negative.
     #[error("invalid mode: {width}x{height}@{refresh}mHz")]
     InvalidMode {
         width: i32,
@@ -295,6 +303,8 @@ pub enum PlanError {
     },
 }
 
+/// Request to bring a head up at a specific mode and position. If mode or position are 
+/// absent the compositor picks defaults.
 #[derive(Clone, Debug)]
 pub struct EnableOutput {
     pub name: String,
@@ -302,7 +312,11 @@ pub struct EnableOutput {
     pub position: Option<(i32, i32)>,
 }
 
+/// Compositor-side interface: snapshot the current output layout, wait for
+/// a freshly hot-plugged head to surface, and apply a plan atomically.
 pub trait CompositorAdapter: Send {
+    /// Stable identifier for log output
+    /// just "kde" for now
     fn name(&self) -> &'static str;
 
     /// Set of features this adapter can honor. Diffed against

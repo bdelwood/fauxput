@@ -31,9 +31,11 @@ const SRGB_D65: (f32, f32) = (0.3127, 0.3290);
 
 #[derive(Debug, Error)]
 pub enum EdidError {
+    /// A scalar EDID field rejected its value
     #[error("EDID field `{field}`: {reason}")]
     Field { field: &'static str, reason: String },
 
+    /// An EDID descriptor string (product name, serial) failed validation
     #[error("descriptor string for {field} ({value:?}): {reason}")]
     DescriptorString {
         field: &'static str,
@@ -59,6 +61,8 @@ impl<T, E: fmt::Display> EdidCtx<T> for std::result::Result<T, E> {
     }
 }
 
+/// Display parameters that determine the generated EDID. Persisted in the
+/// state file and replayed on `down` to verify the kernel-side instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EdidSpec {
     pub width: u32,
@@ -69,6 +73,7 @@ pub struct EdidSpec {
     pub instance_index: u32,
 }
 
+/// Convert a string-like value into its redid equiv
 trait ToDescriptorString {
     fn to_descriptor(&self, field: &'static str) -> Result<EdidDescriptorString>;
 }
@@ -132,6 +137,8 @@ pub fn build(spec: &EdidSpec) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Basic-display-parameters block: digital DP input, 8-bit RGB, sRGB default.
+/// Image size left undefined so the compositor computes DPI from its own model.
 pub fn build_basic_display_params() -> Result<EdidR4BasicDisplayParametersFeatures> {
     // virtual input params
     let video_input = redid::EdidR4VideoInputDefinition::Digital(
@@ -163,6 +170,7 @@ pub fn build_basic_display_params() -> Result<EdidR4BasicDisplayParametersFeatur
         .build())
 }
 
+/// Convert any `(f32, f32)` CIE xy pair into a redid chromaticity point
 trait IntoChromaticity {
     fn into_chromaticity(self, field: &'static str) -> Result<EdidChromaticityPoint>;
 }
@@ -177,6 +185,7 @@ where
     }
 }
 
+/// Standard sRGB primaries + D65 whitepoint, packed for the EDID chromaticity block.
 pub fn srgb_chromaticity() -> Result<EdidFilterChromaticity> {
     Ok(EdidFilterChromaticity::Color(
         EdidChromaticityPoints::builder()
@@ -229,6 +238,9 @@ pub fn build_dtd(t: &Timing) -> Result<EdidDescriptorDetailedTiming> {
         .build())
 }
 
+/// Display-range-limits descriptor: narrow +/- Hz / +/-5 kHz windows around the
+/// requested mode plus a max pixel clock. Tells the compositor what range
+/// the (virtual) display will accept.
 pub fn build_range_limits(t: &Timing, refresh_hz: u32) -> Result<EdidR4DisplayRangeLimits> {
     let hfreq_khz = t.pixel_clock_khz / t.h_total();
     // +/- 5 kHz around horiz freq

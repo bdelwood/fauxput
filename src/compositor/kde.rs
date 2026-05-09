@@ -1,4 +1,4 @@
-//! KDE/Plasma `kde_output_management_v2` driver.
+//! KDE/Plasma `kde_output_management_v2` adapter.
 
 use std::collections::HashSet;
 
@@ -58,6 +58,9 @@ impl KdeCompositor {
         Ok(Some(Self { session, manager }))
     }
 
+    /// Submits a configuration to KWin and blocks until it succeeds or
+    /// fails. Skips the round-trip entirely when the populate closure
+    /// reports no changes.
     fn submit<F>(&mut self, ctx: &'static str, populate: F) -> Result<()>
     where
         F: FnOnce(&KdeOutputConfigurationV2, &State) -> Result<usize>,
@@ -68,16 +71,21 @@ impl KdeCompositor {
             .create_configuration(self.session.qhandle(), ());
         let touched = populate(&cfg, &self.session.state)?;
 
+        // case where we have nothing to commit.
         if touched == 0 {
             cfg.destroy();
             return Ok(());
         }
 
+        // Reset the result slot before triggering apply
+        // the configuration object's Dispatch impl will fill it in from the server reply.
         self.session.state.apply_result = ApplyResult::Pending;
         self.session.state.pending_failure_reason = None;
         cfg.apply();
         self.session.flush(ctx)?;
 
+        // Poll for a non-pending result, bailing early if the manager
+        // global disappears mid-wait.
         let result = self.session.poll_until(
             format!("kde apply ({ctx})"),
             APPLY_TIMEOUT,
@@ -95,6 +103,8 @@ impl KdeCompositor {
             },
         );
 
+        // KWin won't accept a second apply on the same configuration object,
+        //  so destroy it regardless of how the poll resolved.
         cfg.destroy();
 
         match result? {
@@ -110,10 +120,13 @@ impl CompositorAdapter for KdeCompositor {
         "kde"
     }
 
+    /// Features KWin natively honors
     fn supported_features(&self) -> HashSet<FeatureKind> {
         HashSet::from([FeatureKind::Primary])
     }
 
+    /// Force a fresh roundtrip so
+    ///  the snapshot reflects KWin's current state
     fn snapshot(&mut self) -> Result<OutputSnapshot> {
         self.session.roundtrip("kde: snapshot refresh")?;
         Ok(OutputSnapshot {
@@ -121,6 +134,9 @@ impl CompositorAdapter for KdeCompositor {
         })
     }
 
+    /// Polls until a head appears whose name wasn't in `baseline`.
+    /// The kernel-side hot-plug is synchronous, but
+    /// KWin advertises the new connector asynchronously.
     fn wait_for_new_head(
         &mut self,
         baseline: &HashSet<String>,
@@ -138,12 +154,14 @@ impl CompositorAdapter for KdeCompositor {
     }
 
     fn apply(&mut self, plan: &OutputPlan) -> Result<()> {
+        // Refresh state before computing the diff so we're working with
+        // KWin's current view of the world.
         self.session.roundtrip("kde: apply refresh")?;
         let live = self.session.state.live_heads();
         let plan = plan.clone();
 
         // KDE's `set_priority` is 1-indexed
-        // 0 is unranked
+        // 0 is the unranked sentinel
         let primary_name = plan.primary();
         let mut next: u32 = if primary_name.is_some() { 2 } else { 1 };
         let mut priorities = IndexMap::with_capacity(live.len());
@@ -161,17 +179,24 @@ impl CompositorAdapter for KdeCompositor {
         self.submit("apply", move |cfg, state| {
             let mut touched = 0;
 
+            // Walk every live head and write only the properties that
+            // actually changed. KWin treats unmentioned heads as "leave
+            // alone" for most properties.
             for head in &live {
+                // skip heads we don't have a bound proxy for
                 let Some(proxy) = state.device_by_name(&head.name) else {
                     continue;
                 };
                 let target = Target::for_head(head, &plan);
 
+                // enable/disable diff
                 if target.enabled != head.enabled {
                     cfg.enable(&proxy, target.enabled.into());
                     touched += 1;
                 }
 
+                // mode diff
+                // skipped if no matching mode proxy is on file
                 if target.enabled
                     && let Some(mode) = target.mode
                     && Some(mode) != head.mode
@@ -181,6 +206,7 @@ impl CompositorAdapter for KdeCompositor {
                     touched += 1;
                 }
 
+                // position diff
                 if target.enabled
                     && let Some(pos) = target.position
                     && Some(pos) != head.position
@@ -189,6 +215,7 @@ impl CompositorAdapter for KdeCompositor {
                     touched += 1;
                 }
 
+                // priority resets to 0 unless re-asserted on every apply
                 cfg.set_priority(&proxy, priorities[&head.name]);
                 touched += 1;
             }
@@ -197,6 +224,7 @@ impl CompositorAdapter for KdeCompositor {
     }
 }
 
+/// What a single head should look like after the plan is applied.
 struct Target {
     enabled: bool,
     mode: Option<ModeInfo>,
@@ -208,7 +236,11 @@ impl Target {
         let enable_entry = plan.enables.iter().find(|entry| entry.name == head.name);
         let disabled = plan.disables.iter().any(|name| name == &head.name);
         Self {
+            // Disable wins outright; otherwise an explicit enable forces the
+            // head on, and unmentioned heads keep whatever they had.
             enabled: !disabled && (enable_entry.is_some() || head.enabled),
+            // Plan-supplied mode/position override the live values
+            // absent fields fall back to what the compositor reported.
             mode: enable_entry.and_then(|entry| entry.mode).or(head.mode),
             position: enable_entry
                 .and_then(|entry| entry.position)
@@ -217,14 +249,27 @@ impl Target {
     }
 }
 
+/// Per-session bookkeeping. The wayland event loop mutates this in response
+/// to server messages
+/// the adapter reads it to compute snapshots and to
+/// observe the result of a submitted configuration.
 #[derive(Default)]
 struct State {
+    /// Bound manager proxy.
+    /// Taken out of the option once `connect` has claimed it
     manager: Option<KdeOutputManagementV2>,
+    /// Numeric registry name for the manager.
     manager_registry_name: Option<u32>,
+    /// Sticky liveness flag.
     manager_alive: bool,
+    /// Devices keyed by their wayland protocol id.
     devices: IndexMap<u32, Device>,
+    /// Modes keyed by protocol id, paired with the parent device id
     modes: IndexMap<u32, (u32, ModeData)>,
+    /// Result of the most recent `apply()`
     apply_result: ApplyResult,
+    /// Optional reason for an apply failure. The protocol may send this
+    /// before the `Failed` event.
     pending_failure_reason: Option<String>,
 }
 
@@ -244,6 +289,7 @@ struct Device {
 
 type ModeData = OutputMode<KdeOutputDeviceModeV2>;
 
+/// Outcome slot for a single apply round-trip.
 #[derive(Default, PartialEq, Eq)]
 enum ApplyResult {
     #[default]
@@ -255,18 +301,26 @@ enum ApplyResult {
 }
 
 impl State {
+    /// Projects every device that has finished its initial event burst into
+    /// a public state of the head.
     fn live_heads(&self) -> Vec<HeadState> {
         self.devices
             .values()
+            // skip devices KWin hasn't finished describing yet
             .filter(|device| device.name.is_some() && device.done_seen)
+            // resolve each into the public shape with its mode dereffed
             .map(|device| self.head(device))
             .collect()
     }
 
+    /// Snapshot a single device into the public head shape, resolving the
+    /// `current_mode` id back to its `ModeInfo`.
     fn head(&self, device: &Device) -> HeadState {
         let mode = device
             .current_mode
+            // dereference the id into the modes table
             .and_then(|id| self.modes.get(&id))
+            // discard the parent-id pairing, keep just the ModeInfo
             .map(|(_, mode_data)| mode_data.info);
 
         HeadState {
@@ -279,14 +333,22 @@ impl State {
         }
     }
 
+    /// Look up a device proxy by the connector name KWin advertised.
     fn device_by_name(&self, name: &str) -> Option<KdeOutputDeviceV2> {
         self.devices
             .values()
+            // find the device whose name matches
             .find(|device| device.name.as_deref() == Some(name))
+            // hand back its bound proxy so the caller can issue requests on it
             .and_then(|device| device.proxy.clone())
     }
 
+    /// Find the mode proxy on a given device whose dimensions and refresh
+    /// rate match `want`. Refresh comparison is loose (within 100 mHz)
+    /// because compositors round 59.94/60-style numbers slightly differently
+    /// than what the user's plan asked for.
     fn find_mode_proxy(&self, device_name: &str, want: ModeInfo) -> Option<KdeOutputDeviceModeV2> {
+        // resolve the connector name into the device's protocol id
         let device_id = self
             .devices
             .iter()
@@ -295,16 +357,21 @@ impl State {
 
         self.modes
             .iter()
+            // find a mode that belongs to this device and matches
+            // dimensions exactly, refresh within rounding tolerance
             .find(|(_, (parent, mode_data))| {
                 *parent == device_id
                     && mode_data.info.width == want.width
                     && mode_data.info.height == want.height
                     && (mode_data.info.refresh_mhz - want.refresh_mhz) < 100
             })
+            // hand back its proxy if any
             .and_then(|(_, (_, mode_data))| mode_data.proxy.clone())
     }
 }
 
+/// Binds the manager and per-output globals as KWin advertises them, and
+/// reacts to globals disappearing mid-session.
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(
         state: &mut Self,
@@ -320,6 +387,8 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 interface,
                 version,
             } => match interface.as_str() {
+                // The protocol entry point. Bound once and reused for
+                // every `submit` to build configuration objects.
                 "kde_output_management_v2" => {
                     let bind_version = version.min(MGMT_VERSION);
                     state.manager = Some(registry.bind::<KdeOutputManagementV2, _, _>(
@@ -330,6 +399,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     ));
                     state.manager_registry_name = Some(name);
                 }
+                // One device per output. Binding gives us the proxy that
+                // receives the per-head property events the snapshot code
+                // reads from.
                 "kde_output_device_v2" => {
                     let bind_version = version.min(DEVICE_VERSION);
                     let device =
@@ -342,18 +414,25 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 _ => {}
             },
             wl_registry::Event::GlobalRemove { name } => {
+                // Manager removed: KWin restarted or crashed.
                 if state.manager_registry_name == Some(name) {
                     state.manager_alive = false;
                     state.manager_registry_name = None;
                     return;
                 }
+                // Device removed: a real monitor was unplugged. Drop the
+                // device record along with any modes that referenced it
+                // so subsequent snapshots don't surface stale state.
                 if let Some(device_id) = state
                     .devices
                     .iter()
+                    // match by registry name to find the protocol id
                     .find(|(_, device)| device.registry_name == Some(name))
                     .map(|(id, _)| *id)
                 {
+                    // drop the device record
                     state.devices.shift_remove(&device_id);
+                    // drop any modes that hung off it
                     state.modes.retain(|_, (parent, _)| *parent != device_id);
                 }
             }
@@ -362,6 +441,8 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
     }
 }
 
+/// The manager itself emits no events; this impl exists only to satisfy
+/// the trait bound on bound proxies.
 impl Dispatch<KdeOutputManagementV2, ()> for State {
     fn event(
         _state: &mut Self,
@@ -375,7 +456,11 @@ impl Dispatch<KdeOutputManagementV2, ()> for State {
     }
 }
 
+/// Records per-device state as KWin streams it in. The device only becomes
+/// visible to callers once the server signals its initial burst is complete.
 impl Dispatch<KdeOutputDeviceV2, ()> for State {
+    // The `mode` event spawns a child proxy; wayland-rs needs to know
+    // what type to construct for it.
     wayland_client::event_created_child!(State, KdeOutputDeviceV2, [
         2 => (KdeOutputDeviceModeV2, ()),
     ]);
@@ -403,6 +488,7 @@ impl Dispatch<KdeOutputDeviceV2, ()> for State {
                 entry.transform = Transform::try_from(transform).ok();
             }
             Scale { factor } => {
+                // Snap to the 1/120 grid that fractional-scale-v1 negotiates
                 entry.scale = {
                     let snap_scale = (factor * 120.0).round() / 120.0;
                     Some(snap_scale)
@@ -417,6 +503,8 @@ impl Dispatch<KdeOutputDeviceV2, ()> for State {
                 mode_entry.0 = device_id;
                 mode_entry.1.proxy = Some(mode);
 
+                // Older KWin sometimes never sends `current_mode`; per
+                // libkscreen the last `mode` event is implicitly current.
                 if entry.current_mode.is_none() {
                     entry.current_mode = Some(mode_id);
                 }
@@ -427,6 +515,8 @@ impl Dispatch<KdeOutputDeviceV2, ()> for State {
     }
 }
 
+/// Records mode size and refresh as the server streams them in, and
+/// cleans up when the server retires a mode.
 impl Dispatch<KdeOutputDeviceModeV2, ()> for State {
     fn event(
         state: &mut Self,
@@ -439,6 +529,8 @@ impl Dispatch<KdeOutputDeviceModeV2, ()> for State {
         use kde_output_device_mode_v2::Event::*;
         let mode_id = mode.id().protocol_id();
 
+        // Drop the mode
+        // if it was a device's current_mode, repoint to a sibling.
         if matches!(event, Removed) {
             let parent_id = state.modes.get(&mode_id).map(|(parent, _)| *parent);
             state.modes.shift_remove(&mode_id);
@@ -473,6 +565,8 @@ impl Dispatch<KdeOutputDeviceModeV2, ()> for State {
     }
 }
 
+/// Receives the server's verdict on a submitted configuration and stashes
+/// any failure reason for the apply machinery to consume.
 impl Dispatch<KdeOutputConfigurationV2, ()> for State {
     fn event(
         state: &mut Self,
