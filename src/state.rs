@@ -97,6 +97,7 @@ impl StateStore {
     }
 
     /// alternative constructor; useful for testing
+    #[allow(dead_code)]
     fn with_dir(dir: PathBuf) -> Self {
         Self {
             file: dir.join("active.json"),

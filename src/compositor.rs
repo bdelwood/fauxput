@@ -143,11 +143,6 @@ impl OutputPlan {
         OutputPlanBuilder::default()
     }
 
-    /// True when applying this plan does nothing. Adapters can short-circuit.
-    pub fn is_empty(&self) -> bool {
-        self.enables.is_empty() && self.disables.is_empty() && self.features.is_empty()
-    }
-
     /// What capabilities does this plan ask for?
     pub fn requested_features(&self) -> HashSet<FeatureKind> {
         self.features.iter().map(FeatureKind::from).collect()
