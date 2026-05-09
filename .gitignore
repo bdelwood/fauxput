@@ -9,6 +9,7 @@ rustc-ice-*.txt
 # makepkg scratch + output
 /packaging/arch/pkg/
 /packaging/arch/src/
+/.dev-pkg/
 *.pkg.tar.zst
 
 # mdbook build output

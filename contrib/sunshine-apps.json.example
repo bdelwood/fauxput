@@ -1,0 +1,33 @@
+{
+  "env": {
+    "PATH": "$(PATH):/home/USERNAME/.local/bin",
+    "FAUXPUT_BIN": "/home/USERNAME/.local/bin/fauxput"
+  },
+  "apps": [
+    {
+      "name": "Desktop (fauxput auto-resize)",
+      "image-path": "desktop.png",
+
+      "_comment": "fauxput creates a virtual display matching the requesting client's resolution; teardown removes it when the client disconnects.",
+      "prep-cmd": [
+        {
+          "do": "/home/USERNAME/.local/share/fauxput/sunshine-fauxput-up.sh",
+          "undo": "/home/USERNAME/.local/share/fauxput/sunshine-fauxput-down.sh"
+        }
+      ]
+    },
+
+    {
+      "name": "Steam Big Picture (fauxput)",
+      "image-path": "steam.png",
+
+      "prep-cmd": [
+        {
+          "do": "/home/USERNAME/.local/share/fauxput/sunshine-fauxput-up.sh",
+          "undo": "/home/USERNAME/.local/share/fauxput/sunshine-fauxput-down.sh"
+        }
+      ],
+      "detached": ["steam steam://open/bigpicture"]
+    }
+  ]
+}
