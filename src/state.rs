@@ -108,10 +108,10 @@ impl StateStore {
     fn with_lock<R>(&self, op: impl FnOnce(&Self) -> Result<R>) -> Result<R> {
         self.ensure_dir()?;
         let guard = OpenOptions::new()
-            .read()
-            .write()
-            .create()
-            .truncate()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
             .open(&self.lock_file)
             .map_err(|source| StateError::Io {
                 path: self.lock_file.clone(),
@@ -196,7 +196,7 @@ impl StateStore {
                 path: self.dir.clone(),
                 source,
             })?;
-            let _ = fs::set_permissions(&self.file, fs::Permissions::from_mode(0o755));
+            let _ = fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o755));
         }
         Ok(())
     }
