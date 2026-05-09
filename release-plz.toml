@@ -1,0 +1,13 @@
+# release-plz configuration
+# https://release-plz.dev/docs/config
+#
+
+[workspace]
+# Release only when the release PR merges, not on every push to master.
+release_always = false
+# Skip crates.io publish.
+publish = false
+
+[[package]]
+name = "fauxput"
+git_tag_name = "v{{ version }}"

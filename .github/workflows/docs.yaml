@@ -2,7 +2,7 @@ name: Build docs (mdbook + rustdoc)
 
 on:
   push:
-    branches: [ main ]
+    branches: [master]
     paths:
       - "src/**"
       - "build.rs"
@@ -30,7 +30,6 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install system deps for cargo doc
-        # libxcvt + wayland + libdrm — fauxput build deps.
         run: |
           sudo apt-get update
           sudo apt-get install -y libxcvt-dev libwayland-dev libdrm-dev pkg-config
