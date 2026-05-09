@@ -10,6 +10,7 @@ rust-version = "1.94"
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
 clap-verbosity-flag = "3.0.4"
+dialoguer = "0.12.0"
 enum-as-inner = "0.7.0"
 env_logger = "0.11.10"
 indexmap = "2.14.0"
@@ -31,9 +32,6 @@ wayland-protocols-plasma = { version = "0.3.12", features = ["client"] }
 [build-dependencies]
 bindgen = "0.72.1"
 pkg-config = "0.3.33"
-
-[dev-dependencies]
-tempfile = "3"
 
 # Override the published `wayland-protocols-plasma` to use my fork that has
 # the KDE plasma-wayland-protocols submodule bumped to a recent revision

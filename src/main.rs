@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
-use std::io;
+use dialoguer::Confirm;
 use std::io::Write;
+use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
+use fauxput::backend::configfs_vkms::ConfigfsVkms;
 use fauxput::edid::EdidSpec;
 use fauxput::lifecycle::{self, UpRequest};
 use fauxput::state::StateStore;
@@ -176,9 +178,49 @@ fn status(json: bool) -> Result<()> {
 
     println!("{} active virtual display(s)", state.instances.len());
 
+    for rec in &state.instances {
+        println!(
+            "  {} {}x{}@{}Hz [active]",
+            rec.handle.local_id, rec.spec.width, rec.spec.height, rec.spec.refresh_hz
+        );
+    }
+
     Ok(())
 }
 
 fn reset(yes: bool) -> Result<()> {
-    todo!()
+    if !yes {
+        let backend = ConfigfsVkms::new();
+        let on_disk = backend.list().unwrap_or_default();
+        if on_disk.is_empty() {
+            println!("nothing to reset")
+        };
+        return Ok(());
+    }
+    eprintln!(
+        "this will force-remove {} fauxput-* instance(s) under {}:",
+        on_disk.len(),
+        fauxput::backend::configfs_vkms::CONFIGFS_VKMS_ROOT
+    );
+
+    for h in &on_disk {
+        eprintln!(" - {}", h.local_id);
+    }
+
+    if !io::stdin().is_terminal() {
+        anyhow::bail!("not an interactive shell. Use --yes to confirm non-interactively.");
+    }
+    let confirmed = Confirm::new()
+        .with_prompt("proceed?")
+        .default(false)
+        .interact()?;
+
+    if !confirmed {
+        eprintln!("aborted");
+        return Ok(());
+    };
+
+    let removed = lifecycle::reset().context("reset failed")?;
+    println!("reset removed {removed} instances(s)");
+    Ok(())
 }

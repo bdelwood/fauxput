@@ -1,6 +1,6 @@
 //! Library for `fauxput`
 
-mod backend;
+pub mod backend;
 mod compositor;
 pub mod edid;
 pub mod error;
