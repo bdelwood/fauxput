@@ -24,6 +24,9 @@ rustc-ice-*.txt
 *.swp
 *~
 
+# direnv (paths are user-specific)
+.envrc
+
 # git worktrees
 /.worktrees/
 
