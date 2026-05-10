@@ -43,6 +43,14 @@ ci: fmt-check lint test
 [group('dev')]
 all: fmt-check lint test build docs
 
+# Push Cargo.toml's keywords to the GitHub repo's topics list.
+[group('dev')]
+sync-topics:
+    @KEYWORDS=$(cargo metadata --format-version 1 --no-deps | jq -c '.packages[0].keywords') && \
+        REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner) && \
+        echo "==> setting topics on $REPO: $KEYWORDS" && \
+        gh api -X PUT "repos/$REPO/topics" --input - <<<"{\"names\": $KEYWORDS}"
+
 [group('docs')]
 docs-rs:
     cargo doc --no-deps --lib
