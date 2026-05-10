@@ -303,7 +303,7 @@ pub enum PlanError {
     },
 }
 
-/// Request to bring a head up at a specific mode and position. If mode or position are 
+/// Request to bring a head up at a specific mode and position. If mode or position are
 /// absent the compositor picks defaults.
 #[derive(Clone, Debug)]
 pub struct EnableOutput {
