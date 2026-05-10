@@ -1,7 +1,14 @@
 //! Compositor adapter trait + serializable types for output snapshot/restore.
 
+#[cfg(feature = "gnome")]
+pub mod gnome;
+
+#[cfg(feature = "kde")]
 pub mod kde;
+
+#[cfg(feature = "kde")]
 pub mod wayland;
+
 pub mod wlr;
 
 use std::collections::HashSet;

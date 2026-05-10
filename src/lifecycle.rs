@@ -7,23 +7,29 @@ use std::{collections::HashSet, time::Duration};
 use crate::{
     Result,
     backend::{CreateOutcome, DisplayBackend, DisplayHandle, pick_backend},
-    compositor::{
-        CompositorAdapter, EnableOutput, ModeInfo, OutputPlan, OutputSnapshot, kde::KdeCompositor,
-    },
+    compositor::{CompositorAdapter, EnableOutput, ModeInfo, OutputPlan, OutputSnapshot},
     edid::EdidSpec,
     state::{ActiveState, InstanceRecord, LayoutChanges, StateStore},
 };
+
+#[cfg(feature = "kde")]
+use crate::compositor::kde::KdeCompositor;
 
 /// How long to wait for the kernel hot-plug to surface as a Wayland head.
 const HEAD_APPEAR_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Try each adapter in order and return the first one that connects.
 fn connect_compositor() -> Option<Box<dyn CompositorAdapter>> {
-    match KdeCompositor::connect() {
-        Ok(Some(c)) => return Some(Box::new(c)),
-        Ok(None) => log::debug!("kde_output_management_v2 not advertised"),
-        Err(e) => log::warn!("kde connect failed: {e:#}"),
+    #[cfg(feature = "kde")]
+    {
+        match KdeCompositor::connect() {
+            Ok(Some(c)) => return Some(Box::new(c)),
+            Ok(None) => log::debug!("kde_output_management_v2 not advertised"),
+            Err(e) => log::warn!("kde connect failed: {e:#}"),
+        }
     }
+    // TODO(gnome): wire gnome in
+
     None
 }
 

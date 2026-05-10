@@ -29,11 +29,19 @@ strum = { version = "0.28", features = ["derive"] }
 tempfile = "3"
 thiserror = "2"
 wayland-client = "0.31"
-wayland-protocols-plasma = { version = "0.3", features = ["client"] }
+wayland-protocols-plasma = { version = "0.3", features = [
+    "client",
+], optional = true }
+zbus = { version = "5.15.0", optional = true }
 
 [build-dependencies]
 bindgen = "0.72"
 pkg-config = "0.3"
+
+[features]
+default = ["kde", "gnome"]
+gnome = ["dep:zbus"]
+kde = ["dep:wayland-protocols-plasma"]
 
 # Override the published `wayland-protocols-plasma` to use my fork that has
 # the KDE plasma-wayland-protocols submodule bumped to a recent revision
