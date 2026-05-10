@@ -84,16 +84,29 @@ pkg-install: pkg
     fauxput reset --yes 2>/dev/null || true
     @echo "==> done. Verify: getcap /usr/bin/fauxput"
 
-# Sync the latest tag to the AUR repo and push (requires AUR_REPO env var).
+# Sync the latest tag to BOTH AUR repos (source + bin); requires AUR_REPO and AUR_REPO_BIN env vars.
 [group('pkg')]
-aur-sync:
-    @[ -n "${AUR_REPO:-}" ] || (echo "set AUR_REPO to your AUR clone path" && exit 1)
+aur-sync: aur-sync-source aur-sync-bin
+
+# Sync the latest tag to the source AUR repo (requires AUR_REPO env var).
+[group('pkg')]
+aur-sync-source:
+    @just _aur-sync packaging/arch "${AUR_REPO:?set AUR_REPO to your AUR clone path}"
+
+# Sync the latest tag's prebuilt binary to the fauxput-bin AUR repo (requires AUR_REPO_BIN env var).
+[group('pkg')]
+aur-sync-bin:
+    @just _aur-sync packaging/arch-bin "${AUR_REPO_BIN:?set AUR_REPO_BIN to your fauxput-bin AUR clone path}"
+
+# Internal: render {{TEMPLATE_DIR}}/PKGBUILD into {{AUR_REPO}}, build, commit, push.
+[private]
+_aur-sync TEMPLATE_DIR AUR_REPO:
     VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//') && \
-        echo "==> syncing v$VERSION to $AUR_REPO" && \
+        echo "==> syncing v$VERSION to {{AUR_REPO}}" && \
         sed "s|^pkgver=__PLACEHOLDER__|pkgver=$VERSION|" \
-            packaging/arch/PKGBUILD > "$AUR_REPO/PKGBUILD" && \
-        cp packaging/arch/fauxput.install "$AUR_REPO/" && \
-        cd "$AUR_REPO" && \
+            "{{TEMPLATE_DIR}}/PKGBUILD" > "{{AUR_REPO}}/PKGBUILD" && \
+        cp "{{TEMPLATE_DIR}}/fauxput.install" "{{AUR_REPO}}/" && \
+        cd "{{AUR_REPO}}" && \
         updpkgsums && \
         makepkg -f --noconfirm && \
         makepkg --printsrcinfo > .SRCINFO && \

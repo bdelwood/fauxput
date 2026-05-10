@@ -13,6 +13,9 @@ jobs:
     name: Tag + create GitHub release
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'bdelwood' }}
+    outputs:
+      releases_created: ${{ steps.release-plz.outputs.releases_created }}
+      releases: ${{ steps.release-plz.outputs.releases }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -27,11 +30,51 @@ jobs:
           sudo apt-get install -y libxcvt-dev libwayland-dev libdrm-dev pkg-config
 
       - name: Run release-plz release
+        id: release-plz
         uses: release-plz/action@v0.5
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-binaries:
+    name: Upload prebuilt binary (${{ matrix.target }})
+    needs: release-plz-release
+    if: ${{ github.repository_owner == 'bdelwood' && needs.release-plz-release.outputs.releases_created == 'true' }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcvt-dev libwayland-dev libdrm-dev pkg-config
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Build + upload
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: fauxput
+          target: ${{ matrix.target }}
+          archive: $bin-$tag-$target
+          tar: unix
+          checksum: sha256
+          locked: true
+          include: LICENSE,contrib
+          ref: refs/tags/${{ fromJson(needs.release-plz-release.outputs.releases)[0].tag }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   release-plz-pr:
     name: Open / update release PR
