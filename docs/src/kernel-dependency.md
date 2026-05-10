@@ -1,6 +1,6 @@
 # Kernel dependency: vkms-edid-dkms
 
-fauxput writes per-display EDID into `/sys/kernel/config/vkms/<inst>/connectors/0/edid`. That attribute doesn't exist in mainline Linux 7.0.x; it's part of Louis Chauvet's [VKMS configfs attributes patch series](https://lore.kernel.org/dri-devel/?q=s%3A%22vkms%3A+Introduce+multiple+configFS%22). Until upstream lands, fauxput needs a patched `vkms.ko`. The `fauxput` feature-detects the `edid` attribute and warns when it's missing; with the patched module loaded, requested resolutions take effect.
+fauxput writes per-display EDID into `/sys/kernel/config/vkms/<inst>/connectors/0/edid`. That attribute doesn't exist in mainline Linux 7.0.x; it's part of Louis Chauvet's [VKMS configfs attributes patch series](https://lore.kernel.org/dri-devel/?q=s%3A%22vkms%3A+Introduce+multiple+configFS%22). Until that lands in upstream, fauxput needs a patched `vkms.ko`. `fauxput` will detect the `edid` attribute and warns when it's missing; with the patched module loaded, requested resolutions take effect.
 
 ## Building the patched module
 
@@ -110,21 +110,19 @@ sudo rmdir /sys/kernel/config/vkms/probe/connectors/0 /sys/kernel/config/vkms/pr
 
 Listing should include both `edid` and `edid_enabled` (along with `possible_encoders`, `status`, `type`). With in-tree vkms only the latter three appear. `fauxput up` will also stop printing the "EDID write skipped" warning.
 
+
+## About the patch series
+
+Louis Chauvet's [VKMS configfs attributes patch series](https://lore.kernel.org/dri-devel/?q=s%3A%22vkms%3A+Introduce+multiple+configFS%22) (33 patches, posted to dri-devel December 2025) adds a configfs interface to the kernel's virtual KMS driver, letting userspace configure simulated displays at runtime with writes under `/sys/kernel/config/vkms/`. fauxput only needs the per-connector `edid` and `edid_enabled` attributes from that series (patches 27 and 28), but they build on shared infrastructure earlier in the series, so I suggest applying the full patchset. 
+
 ## When upstream lands
 
-Watch dri-devel for the v3 / v4 series merging into mainline:
+Watch dri-devel for the v3/v4 series merging into mainline:
 
 - <https://lore.kernel.org/dri-devel/?q=s%3A%22vkms%3A+Introduce+multiple+configFS%22>
-- `git log --grep configfs drivers/gpu/drm/vkms/` in mainline / linux-next
+- `git log --grep configfs drivers/gpu/drm/vkms/` in mainline/linux-next
 
 Once the in-tree vkms exposes `edid` and `edid_enabled`:
 
 1. Uninstall the DKMS package (Approach B uninstall above).
 2. Reboot or `modprobe -r vkms; modprobe vkms`.
-3. fauxput's runtime feature-detection picks up the in-tree attribute automatically — no fauxput code change.
-
----
-
-## About the patch series
-
-Louis Chauvet's [VKMS configfs attributes patch series](https://lore.kernel.org/dri-devel/?q=s%3A%22vkms%3A+Introduce+multiple+configFS%22) (33 patches, posted to dri-devel December 2025) adds a configfs interface to the kernel's virtual KMS driver, letting userspace configure simulated displays at runtime with writes under `/sys/kernel/config/vkms/`. fauxput only needs the per-connector `edid` and `edid_enabled` attributes from that series (patches 27 and 28), but they build on shared infrastructure earlier in the series, so the patched module ships the full set.

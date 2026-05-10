@@ -26,11 +26,11 @@ I was super annoyed that resolutions weren't being dynamically set by Sunshine c
 ### Prerequisites
 
 - Linux kernel $\geq$ 7.0 with `vkms`
-- A patched `vkms` with the EDID configfs interface. See the [docs](../docs/kernel-dependency.md) for details.
+- A patched `vkms` with the EDID configfs interface. See the [docs](docs/src/kernel-dependency.md) for details.
 - For streaming integration: Sunshine.
     - Recommend using Sunshine $\geq$ 2026.4 which has a new portal capture backend that should work on any compositor that supports `xdg-desktop-portal`. 
 
-### Dependencies
+### System Dependencies
 
 - `libcap`
 - `libxcvt`
@@ -90,20 +90,20 @@ fauxput reset --yes
 
 ## DE / Sunshine support
 
-| Desktop | Status |
-|---|---|
-| KDE Plasma 6 | ✓ |
-| GNOME (Mutter) | planned |
-| wlroots (Sway, Hyprland, ...) | planned |
+| Desktop | Supported version | Status |
+|---|---|---|
+| KDE Plasma (kwin) | $\geq$ 6.2 | ✓ |
+| GNOME (Mutter) | TBD | planned |
+| wlroots (Sway, Hyprland, ...) | TBD | planned |
 
 
 Sunshine $\geq$ 2026.4 portal capture works on any of the above once the adapter is in place.
 
 ## Documentation
 
-- [Streaming setup walkthrough](docs/streaming-setup.md) — wire fauxput into Sunshine + Moonlight
-- [System-level gotchas + working Sunshine recipe](docs/footguns.md)
-- [Kernel-side dependency](docs/kernel-dependency.md) — the `vkms-edid-dkms` patch series
+- [Streaming setup walkthrough](docs/src/streaming-setup.md) — wire fauxput into Sunshine + Moonlight
+- [Troubleshooting + working Sunshine recipe](docs/src/troubleshooting.md.md)
+- [Kernel-side dependency](docs/src/kernel-dependency.md) — the `vkms-edid-dkms` patch series
 
 
 ## TODO
