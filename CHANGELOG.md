@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0](https://github.com/bdelwood/fauxput/releases/tag/v0.1.0) - 2026-05-10
+
+### Added
+
+- add colors to cli to feel fancy
+- add reset to cli, make status more useful
+- wire up cli to actual orchestration functions
+- add top level orchestration module
+- add state management for active instances
+- complete compositor implementation for KDE.
+- add initial cli
+- add partial implementation for  kde backend
+- implement more consistent feature handling.
+- add basic wayland scaffolding and traits
+- add logging to vkms backend mod
+- add configfs-vkms backend
+- attempt first pass at EDID construction
+- implement basic timing module wrapping libxcvt
+
+### Fixed
+
+- set permissions on correct obj
+
+### Other
+
+- backfill CHANGELOG for initial release
+- cleanup
+- improve comments throughout
+- template pkgver for aur releases
+- make it so docs workflow runs on PRs too
+- add release-plz in prep for release
+- change deps version constraints to major-only
+- Update readme and add troubleshooting and Sunshine docs
+- add basic PKGBUILD and Sunshine scripts
+- minor changes to keep clippy happy
+- consolidate tests and make outputplan's builder interface more sane
+- use indexmap to slightly simplify priority setting
+- add some simple unit tests for kwin module
+- add more tests for builder/capability check
+- add ci and docs workflows
+- document required vkms kernel patches
+- implement some edid tests, sprinkle in some logs
+- add basic justfile
+- init
+
 ## [0.5.0] - 2026-05-10
 
 ### Bug Fixes
