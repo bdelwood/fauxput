@@ -135,6 +135,40 @@ pub enum Transform {
     FlippedRot270,
 }
 
+impl TryFrom<i32> for Transform {
+    type Error = i32;
+    fn try_from(value: i32) -> std::result::Result<Self, Self::Error> {
+        Ok(match value {
+            0 => Transform::Normal,
+            1 => Transform::Rot90,
+            2 => Transform::Rot180,
+            3 => Transform::Rot270,
+            4 => Transform::Flipped,
+            5 => Transform::FlippedRot90,
+            6 => Transform::FlippedRot180,
+            7 => Transform::FlippedRot270,
+            _ => return Err(value),
+        })
+    }
+}
+
+impl TryFrom<u32> for Transform {
+    type Error = u32;
+    fn try_from(value: u32) -> std::result::Result<Self, Self::Error> {
+        Ok(match value {
+            0 => Transform::Normal,
+            1 => Transform::Rot90,
+            2 => Transform::Rot180,
+            3 => Transform::Rot270,
+            4 => Transform::Flipped,
+            5 => Transform::FlippedRot90,
+            6 => Transform::FlippedRot180,
+            7 => Transform::FlippedRot270,
+            _ => return Err(value),
+        })
+    }
+}
+
 /// Capability category that a plan may exercise. Adapters declare which
 /// ones they can honor with [`CompositorAdapter::supported_features`]; the
 /// lifecycle layer then warns when a plan asks for one the chosen adapter

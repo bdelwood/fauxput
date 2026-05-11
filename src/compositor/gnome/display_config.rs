@@ -45,13 +45,19 @@ pub(crate) struct MonitorMode {
     pub(crate) supported_scales: Vec<f64>,
     pub(crate) properties: PropertyMap,
 }
-
+impl MonitorMode {
+    pub(crate) fn is_current(&self) -> bool {
+        self.properties
+            .get("is-current")
+            .and_then(|v| bool::try_from(v).ok())
+            .unwrap_or(false)
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub(crate) struct LogicalMonitor {
     pub(crate) x: i32,
     pub(crate) y: i32,
     pub(crate) scale: f64,
-    // TODO: use transform struct and implement from u32
     pub(crate) transform: u32,
     pub(crate) primary: bool,
     pub(crate) monitors: Vec<MonitorIdentity>,

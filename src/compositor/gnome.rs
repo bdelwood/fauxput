@@ -1,11 +1,49 @@
 mod display_config;
 
-use self::display_config::DisplayConfigProxyBlocking;
+use self::display_config::{CurrentState, DisplayConfigProxyBlocking};
 use crate::Result;
-use crate::compositor::{CompositorAdapter, CompositorError, FeatureKind, OutputSnapshot};
-use std::collections::HashSet;
+use crate::compositor::{
+    CompositorAdapter, CompositorError, FeatureKind, HeadState, ModeInfo, OutputSnapshot, Transform,
+};
 
+use std::collections::HashSet;
 use zbus::blocking::Connection;
+
+impl From<CurrentState> for OutputSnapshot {
+    fn from(state: CurrentState) -> Self {
+        let heads = state
+            .monitors
+            .iter()
+            .map(|monitor| {
+                // get logical monitors attached to this head
+                let logical = state.logical_monitors.iter().find(|lm| {
+                    lm.monitors
+                        .iter()
+                        .any(|id| id.connector == monitor.id.connector)
+                });
+
+                HeadState {
+                    name: monitor.id.connector.clone(),
+                    enabled: logical.is_some(),
+                    mode: monitor
+                        .modes
+                        .iter()
+                        .find(|m| m.is_current())
+                        .map(|m| ModeInfo {
+                            width: m.width,
+                            height: m.height,
+                            refresh_mhz: (m.refresh_rate * 1000.0).round() as i32,
+                        }),
+                    position: logical.map(|l| (l.x, l.y)),
+                    scale: logical.map(|l| l.scale),
+                    transform: logical.and_then(|l| Transform::try_from(l.transform).ok()),
+                }
+            })
+            .collect();
+
+        OutputSnapshot { heads }
+    }
+}
 
 pub(crate) struct GnomeCompositor {
     conn: Connection,
@@ -46,7 +84,7 @@ impl GnomeCompositor {
         Ok(Some(Self { conn }))
     }
 
-    fn current_state(&self) -> Result<display_config::CurrentState> {
+    fn current_state(&self) -> Result<CurrentState> {
         let proxy = self.proxy()?;
         proxy
             .get_current_state()
@@ -79,7 +117,7 @@ impl CompositorAdapter for GnomeCompositor {
     }
 
     fn snapshot(&mut self) -> Result<OutputSnapshot> {
-        todo!()
+        Ok(self.current_state()?.into())
     }
 
     fn wait_for_new_head(
@@ -99,34 +137,28 @@ impl CompositorAdapter for GnomeCompositor {
 mod tests {
     use super::*;
 
-    /// Live GNOME/Mutter smoke test for the blocking D-Bus binding.
+    /// End-to-end live test against a running GNOME Wayland session: connects
+    /// to the user session bus, reads Mutter's state, runs it through the
+    /// snapshot conversion, and confirms it produced a usable result.
     ///
-    /// Requires:
-    ///   - a running GNOME Wayland session
-    ///   - access to that session's D-Bus user bus
+    /// Requires a GDM/Mutter session and access to that user's session bus.
     ///
     /// Run with:
-    ///   `cargo test -- --ignored gnome_connects_and_reads_current_state`
+    ///   `cargo test -- --ignored --nocapture gnome_snapshot`
     #[test]
     #[ignore]
-    fn gnome_connects_and_reads_current_state() {
-        let Some(compositor) = GnomeCompositor::connect().expect("GNOME connect failed") else {
+    fn gnome_snapshot() {
+        let Some(mut compositor) = GnomeCompositor::connect().expect("GNOME connect failed") else {
             eprintln!("skipping: org.gnome.Mutter.DisplayConfig unavailable in this session");
             return;
         };
 
-        let state = compositor.current_state().expect("GetCurrentState failed");
+        let snap = compositor.snapshot().expect("snapshot failed");
+        eprintln!("gnome: snapshot = {snap:#?}");
 
         assert!(
-            !state.monitors.is_empty(),
-            "GNOME should report at least one monitor"
-        );
-        assert!(
-            state
-                .logical_monitors
-                .iter()
-                .any(|logical| !logical.monitors.is_empty()),
-            "GNOME should report at least one logical monitor with attached outputs"
+            snap.heads.iter().any(|h| h.enabled),
+            "GNOME session must have at least one enabled head"
         );
     }
 }

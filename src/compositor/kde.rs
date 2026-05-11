@@ -590,23 +590,6 @@ impl Dispatch<KdeOutputConfigurationV2, ()> for State {
     }
 }
 
-impl TryFrom<i32> for Transform {
-    type Error = i32;
-    fn try_from(value: i32) -> std::result::Result<Self, Self::Error> {
-        Ok(match value {
-            0 => Transform::Normal,
-            1 => Transform::Rot90,
-            2 => Transform::Rot180,
-            3 => Transform::Rot270,
-            4 => Transform::Flipped,
-            5 => Transform::FlippedRot90,
-            6 => Transform::FlippedRot180,
-            7 => Transform::FlippedRot270,
-            _ => return Err(value),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
