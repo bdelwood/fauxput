@@ -30,6 +30,14 @@ pub enum CompositorError {
         source: wayland_client::DispatchError,
     },
 
+    #[cfg(feature = "gnome")]
+    #[error("D-Bus error in {context}: {source}")]
+    Dbus {
+        context: &'static str,
+        #[source]
+        source: zbus::Error,
+    },
+
     #[error("timed out after {timeout:?} waiting for {reason}")]
     Timeout { reason: String, timeout: Duration },
 

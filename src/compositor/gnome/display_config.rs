@@ -21,85 +21,85 @@ pub type PropertyMap = HashMap<String, OwnedValue>;
 pub type ApplyPropertyMap = HashMap<String, OwnedValue>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq, Hash)]
-struct MonitorIdentity {
-    connector: String,
-    vendor: String,
-    product: String,
-    serial: String,
+pub(crate) struct MonitorIdentity {
+    pub(crate) connector: String,
+    pub(crate) vendor: String,
+    pub(crate) product: String,
+    pub(crate) serial: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-struct Monitor {
-    id: MonitorIdentity,
-    modes: Vec<MonitorMode>,
-    properties: PropertyMap,
+pub(crate) struct Monitor {
+    pub(crate) id: MonitorIdentity,
+    pub(crate) modes: Vec<MonitorMode>,
+    pub(crate) properties: PropertyMap,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-struct MonitorMode {
-    id: String,
-    width: i32,
-    height: i32,
-    refresh_rate: f64,
-    preferred_scale: f64,
-    supported_scales: Vec<f64>,
-    properties: PropertyMap,
+pub(crate) struct MonitorMode {
+    pub(crate) id: String,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+    pub(crate) refresh_rate: f64,
+    pub(crate) preferred_scale: f64,
+    pub(crate) supported_scales: Vec<f64>,
+    pub(crate) properties: PropertyMap,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-struct LogicalMonitor {
-    x: i32,
-    y: i32,
-    scale: f64,
+pub(crate) struct LogicalMonitor {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) scale: f64,
     // TODO: use transform struct and implement from u32
-    transform: u32,
-    primary: bool,
-    monitors: Vec<MonitorConfig>,
-    properties: PropertyMap,
+    pub(crate) transform: u32,
+    pub(crate) primary: bool,
+    pub(crate) monitors: Vec<MonitorIdentity>,
+    pub(crate) properties: PropertyMap,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-struct LogicalMonitorConfig {
-    x: i32,
-    y: i32,
-    scale: f64,
-    transform: u32,
-    primary: bool,
-    monitors: Vec<LogicalMonitorConfig>,
+pub(crate) struct LogicalMonitorConfig {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) scale: f64,
+    pub(crate) transform: u32,
+    pub(crate) primary: bool,
+    pub(crate) monitors: Vec<MonitorConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct MonitorConfig {
-    connector: String,
-    id: String,
-    properties: ApplyPropertyMap,
+pub(crate) struct MonitorConfig {
+    pub(crate) connector: String,
+    pub(crate) id: String,
+    pub(crate) properties: ApplyPropertyMap,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-struct CurrentState {
-    serial: u32,
-    monitors: Vec<Monitor>,
-    logical_monitors: Vec<LogicalMonitor>,
-    properties: PropertyMap,
+pub(crate) struct CurrentState {
+    pub(crate) serial: u32,
+    pub(crate) monitors: Vec<Monitor>,
+    pub(crate) logical_monitors: Vec<LogicalMonitor>,
+    pub(crate) properties: PropertyMap,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[repr(u32)]
-enum Method {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub(crate) enum Method {
     Verify = 0,
     Temporary = 1,
     Persistent = 2,
 }
 
-#[proxy(interface = "org.gnome.Mutter.DisplayConfig", assume_defaults = true)]
+#[proxy(
+    interface = "org.gnome.Mutter.DisplayConfig",
+    default_service = "org.gnome.Mutter.DisplayConfig",
+    default_path = "/org/gnome/Mutter/DisplayConfig"
+)]
 pub trait DisplayConfig {
     /// GetCurrentState method
-    #[allow(clippy::type_complexity)]
-    #[allow(clippy::type_complexity)]
     fn get_current_state(&self) -> zbus::Result<CurrentState>;
 
     /// ApplyMonitorsConfig method
-    #[allow(clippy::type_complexity)]
     fn apply_monitors_config(
         &self,
         serial: u32,
@@ -115,4 +115,37 @@ pub trait DisplayConfig {
     /// ApplyMonitorsConfigAllowed property
     #[zbus(property)]
     fn apply_monitors_config_allowed(&self) -> zbus::Result<bool>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_state_signature_matches_xml() {
+        assert_eq!(
+            CurrentState::SIGNATURE.to_string(),
+            "(ua((ssss)a(siiddada{sv})a{sv})a(iiduba(ssss)a{sv})a{sv})"
+        );
+    }
+
+    #[test]
+    fn logical_monitor_config_signature_matches_xml() {
+        assert_eq!(
+            LogicalMonitorConfig::SIGNATURE.to_string(),
+            "(iiduba(ssa{sv}))"
+        );
+    }
+
+    #[test]
+    fn method_values_match_xml() {
+        assert_eq!(Method::Verify as u32, 0);
+        assert_eq!(Method::Temporary as u32, 1);
+        assert_eq!(Method::Persistent as u32, 2);
+    }
+
+    #[test]
+    fn method_signature_matches_xml() {
+        assert_eq!(Method::SIGNATURE.to_string(), "u");
+    }
 }

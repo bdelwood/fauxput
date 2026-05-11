@@ -15,6 +15,9 @@ use crate::{
 #[cfg(feature = "kde")]
 use crate::compositor::kde::KdeCompositor;
 
+#[cfg(feature = "gnome")]
+use crate::compositor::gnome::GnomeCompositor;
+
 /// How long to wait for the kernel hot-plug to surface as a Wayland head.
 const HEAD_APPEAR_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -28,8 +31,14 @@ fn connect_compositor() -> Option<Box<dyn CompositorAdapter>> {
             Err(e) => log::warn!("kde connect failed: {e:#}"),
         }
     }
-    // TODO(gnome): wire gnome in
-
+    #[cfg(feature = "gnome")]
+    {
+        match GnomeCompositor::connect() {
+            Ok(Some(c)) => return Some(Box::new(c)),
+            Ok(None) => log::debug!("org.gnome.Mutter.DisplayConfig not available"),
+            Err(e) => log::warn!("gnome connect failed: {e:#}"),
+        }
+    }
     None
 }
 
