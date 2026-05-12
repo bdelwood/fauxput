@@ -28,7 +28,7 @@ I was super annoyed that resolutions weren't being dynamically set by Sunshine c
 - Linux kernel $\geq$ 7.0 with `vkms`
 - A patched `vkms` with the EDID configfs interface. See the [docs](docs/src/kernel-dependency.md) for details.
 - For streaming integration: Sunshine.
-    - Recommend using Sunshine $\geq$ 2026.4 which has a new portal capture backend that should work on any compositor that supports `xdg-desktop-portal`. 
+    - Recommend using Sunshine $\geq$ 2026.4 which has a new portal capture backend that should work on any compositor that supports `xdg-desktop-portal`.
 
 ### System Dependencies
 
@@ -93,7 +93,7 @@ fauxput reset --yes
 | Desktop | Supported version | Status |
 |---|---|---|
 | KDE Plasma (kwin) | $\geq$ 6.2 | ✓ |
-| GNOME (Mutter) | TBD | planned |
+| GNOME (Mutter) | $\geq$ 3.36 | ✓  |
 | wlroots (Sway, Hyprland, ...) | TBD | planned |
 
 
