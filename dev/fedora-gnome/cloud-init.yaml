@@ -1,0 +1,103 @@
+#cloud-config
+# First-boot provisioning for the fauxput Mutter/GNOME test VM.
+
+hostname: fauxput-test
+fqdn: fauxput-test.local
+
+users:
+  - name: test
+    groups: [wheel, input, video]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: false
+    plain_text_passwd: test
+    shell: /bin/bash
+
+ssh_pwauth: true
+
+packages:
+  - dkms
+  - gcc                # for the DKMS build
+  - libxcvt            # fauxput's only non-libc dynamic dep
+  - openssh-server     # not in the F43 cloud base
+  - epiphany           # GNOME Web — for the Sunshine pairing UI
+  # Sunshine runtime deps (the RPM pulls most of these; explicit to fail fast).
+  - ffmpeg-free
+  - libdrm
+  - libcap
+
+write_files:
+  # GDM auto-login. Assert WaylandEnable so an update can't flip it.
+  - path: /etc/gdm/custom.conf
+    content: |
+      [daemon]
+      AutomaticLoginEnable=true
+      AutomaticLogin=test
+      WaylandEnable=true
+  # Auto-load vkms at boot.
+  - path: /etc/modules-load.d/vkms.conf
+    content: |
+      vkms
+  # Suppress vkms's default device — ghost "Unknown Display" in Settings otherwise.
+  - path: /etc/modprobe.d/vkms.conf
+    content: |
+      options vkms create_default_dev=0
+  # Sunshine baseline config
+  # use portal capture, software encoder
+  - path: /home/test/.config/sunshine/sunshine.conf
+    defer: true
+    owner: test:test
+    permissions: '0644'
+    content: |
+      sunshine_name = fauxput-test
+      capture = portal
+      encoder = software
+      min_log_level = info
+  # Sunshine test app.
+  - path: /home/test/.config/sunshine/apps.json
+    defer: true
+    owner: test:test
+    permissions: '0644'
+    content: |
+      {
+        "env": { "PATH": "$(PATH):/usr/local/bin" },
+        "apps": [
+          {
+            "name": "fauxput Desktop",
+            "prep-cmd": [
+              {
+                "do": "/usr/local/bin/fauxput up --width 1920 --height 1080 --fps 60 --primary",
+                "undo": "/usr/local/bin/fauxput down"
+              }
+            ]
+          }
+        ]
+      }
+  # SELinux permissive to keep incus agent working
+  - path: /etc/selinux/config
+    defer: true
+    content: |
+      SELINUX=permissive
+      SELINUXTYPE=targeted
+
+runcmd:
+  - systemctl enable --now sshd
+  # kernel-devel matched to the running kernel; fallback to latest.
+  - dnf install -y "kernel-devel-$(uname -r)" "kernel-headers-$(uname -r)" || dnf install -y kernel-devel kernel-headers
+  # Minimal GNOME: Mutter + shell + gdm + session.
+  - dnf install -y @gnome-desktop
+  # install patched vkms
+  - until [ -f /mnt/vkms-src/dkms.conf ]; do sleep 1; done
+  - cp -rT /mnt/vkms-src /usr/src/vkms-edid-0.1
+  - dkms add -m vkms-edid -v 0.1
+  - dkms install -m vkms-edid -v 0.1
+  # Rebuild initramfs so the early-boot vkms load picks up modprobe.d.
+  - dracut -f
+  # Install Sunshine + seed dev creds.
+  - dnf install -y https://github.com/LizardByte/Sunshine/releases/download/v2026.508.45922/Sunshine-2026.508.45922-1.fc43.x86_64.rpm
+  - sudo -iu test sunshine --creds admin admin
+  - chown -R test:test /home/test/.config
+  # Start sunshine. Unit has the Flathub-style reverse-DNS name in 2026.x.
+  - sudo -iu test systemctl --user enable app-dev.lizardbyte.app.Sunshine.service
+  - loginctl enable-linger test
+  - systemctl set-default graphical.target
+

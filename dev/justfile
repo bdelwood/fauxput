@@ -1,0 +1,79 @@
+# Sub-justfile for fauxput's VM dev harness.
+# See fedora-gnome/README.md for the operator workflow.
+
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+HERE := source_directory()
+VKMS_SRC := env_var("VKMS_SRC")
+
+default:
+    @just --list --justfile {{ HERE }}/justfile
+
+# Bring up a Fedora+GNOME VM with vkms-edid-dkms loaded.
+vm-up:
+    incus init images:fedora/43/cloud fauxput-test --vm \
+        --config user.user-data="$(cat {{ HERE }}/fedora-gnome/cloud-init.yaml)" \
+        --config limits.cpu=12 --config limits.memory=4GiB
+    incus config device add fauxput-test vkms-src disk \
+        source={{ VKMS_SRC }} path=/mnt/vkms-src
+    incus config device add fauxput-test fauxput-src disk \
+        source={{ HERE }}/.. path=/mnt/fauxput-src
+    incus start fauxput-test
+    @just _wait-agent
+    @echo "==> cloud-init provisioning"
+    -incus exec fauxput-test -- cloud-init status --wait
+    incus restart fauxput-test
+    @just _wait-agent
+    @just _wait-gdm
+    @just vm-install
+    @just vm-snapshot
+
+# Take or refresh the `ready` snapshot
+# captures the current VM state for fast resets later.
+vm-snapshot:
+    -incus snapshot delete fauxput-test ready 2>/dev/null
+    incus snapshot create fauxput-test ready
+
+# Restore the VM to the `ready` snapshot.
+# Wipes any runtime state
+vm-reset:
+    incus restart fauxput-test --stateful=false
+    incus snapshot restore fauxput-test ready
+    incus start fauxput-test
+    @just _wait-agent
+
+# Copy the host-built fauxput binary into the VM and setcap it.
+vm-install:
+    cd {{ HERE }}/.. && just build
+    incus file push {{ HERE }}/../target/release/fauxput fauxput-test/usr/local/bin/fauxput --mode=0755
+    incus exec fauxput-test -- setcap cap_dac_override+ep /usr/local/bin/fauxput
+
+# Shell into the VM as the test user.
+vm-shell:
+    incus exec fauxput-test -- sudo -iu test
+
+# Rebuild vkms-edid-dkms inside the VM after editing $VKMS_SRC.
+vm-vkms-rebuild:
+    incus exec fauxput-test -- bash -c '\
+        -dkms remove -m vkms-edid -v 0.1 --all 2>/dev/null; \
+        rm -rf /usr/src/vkms-edid-0.1; \
+        cp -rT /mnt/vkms-src /usr/src/vkms-edid-0.1; \
+        dkms add -m vkms-edid -v 0.1; \
+        dkms install -m vkms-edid -v 0.1'
+    incus restart fauxput-test
+    @just _wait-agent
+    @just _wait-gdm
+
+# Tear down the VM.
+vm-down:
+    incus delete --force fauxput-test
+
+[private]
+_wait-agent:
+    @echo "==> waiting for incus agent"
+    until incus exec fauxput-test -- true 2>/dev/null; do sleep 2; done
+
+[private]
+_wait-gdm:
+    @echo "==> waiting for GDM"
+    until incus exec fauxput-test -- systemctl is-active --quiet gdm 2>/dev/null; do sleep 5; done

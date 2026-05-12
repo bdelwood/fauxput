@@ -1,9 +1,11 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set dotenv-load
 
-# Path to the vkms-edid-dkms source checkout. Override with
-# `VKMS_SRC=/path/to/src just vkms-insmod` or in env file.
-VKMS_SRC := env_var_or_default("VKMS_SRC", env_var("HOME") / "Documents/git/github/vkms-edid-dkms")
+# dev submod
+mod dev 'dev/justfile'
+
+# Path to the vkms-edid-dkms source checkout.
+VKMS_SRC := env_var("VKMS_SRC")
 
 default:
     @just --list
@@ -129,13 +131,16 @@ vkms-insmod:
     sudo modprobe -r vkms
     sudo insmod {{ VKMS_SRC }}/vkms.ko create_default_dev=0
 
-# register vkms with dkms
+# Build/rebuild & register vkms-edid-dkms on the host.
 [group('vkms')]
 vkms-dkms:
+    -fauxput reset --yes 2>/dev/null
+    -sudo dkms remove -m vkms-edid -v 0.1 --all 2>/dev/null
+    sudo rm -rf /usr/src/vkms-edid-0.1
     sudo cp -rT {{ VKMS_SRC }} /usr/src/vkms-edid-0.1
     sudo dkms add -m vkms-edid -v 0.1
     sudo dkms install -m vkms-edid -v 0.1
-    sudo modprobe -r vkms
+    -sudo modprobe -r vkms 2>/dev/null
     sudo modprobe vkms
 
 # helpers for quick testing
