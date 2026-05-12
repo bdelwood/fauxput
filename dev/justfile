@@ -4,7 +4,7 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 HERE := source_directory()
-VKMS_SRC := env_var("VKMS_SRC")
+VKMS_SRC := env_var_or_default("VKMS_SRC", "")
 
 default:
     @just --list --justfile {{ HERE }}/justfile

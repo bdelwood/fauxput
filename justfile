@@ -5,7 +5,7 @@ set dotenv-load
 mod dev 'dev/justfile'
 
 # Path to the vkms-edid-dkms source checkout.
-VKMS_SRC := env_var("VKMS_SRC")
+VKMS_SRC := env_var_or_default("VKMS_SRC", "")
 
 default:
     @just --list
