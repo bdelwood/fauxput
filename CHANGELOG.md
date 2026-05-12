@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-05-12
+
+### CI
+- Replace release workflow with on-release-created binary upload [`13ecef4`](https://github.com/bdelwood/fauxput/commit/13ecef410640cd40daa325410dd3ce4dfbe0ad3c)
+
+### Miscellaneous
+- Drop release-plz; manual git-cliff + tag cuts going forward [`7f88336`](https://github.com/bdelwood/fauxput/commit/7f88336bb9205cc7820d6b93720930d6dc6eea37)
+
 ## [0.6.0] - 2026-05-12
 
 ### Bug Fixes
