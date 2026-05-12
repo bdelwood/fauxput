@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-12
+
+### Bug Fixes
+- Add conflicts [`cd9df8b`](https://github.com/bdelwood/fauxput/commit/cd9df8be604ab32e8c459dd090ed0d40a4bf690d) by @bdelwood
+
+### Build
+- Gate compositor adapters behind cargo features [`0d68d06`](https://github.com/bdelwood/fauxput/commit/0d68d06fe9f6cddf9c998a488741736292068453) by @bdelwood
+
+### Documentation
+- Update readme [`4f28dd4`](https://github.com/bdelwood/fauxput/commit/4f28dd4c4eb834a5773e3bc4bf973dbe12e7196b)
+
+### Features
+- Finish mutter support [`4bfa6c4`](https://github.com/bdelwood/fauxput/commit/4bfa6c478c6d4b73794cdce218dddb8e20e7372d) by @bdelwood
+- Complete gnome snapshot adapter [`b0526bc`](https://github.com/bdelwood/fauxput/commit/b0526bc8a04da2c047dfe334a6e5b2bea6a80ae1) by @bdelwood
+- Read gnome monitor state from DisplayConfig [`23b4e28`](https://github.com/bdelwood/fauxput/commit/23b4e28ad4229a61b84c79bb878a5059cc5a71d4) by @bdelwood
+- Add Mutter DisplayConfig dbus proxy [`b48a901`](https://github.com/bdelwood/fauxput/commit/b48a901f06bd3b30cadced62e87d9c508def5aa4) by @bdelwood
+- Include pre-built binaries in release [`f416cd7`](https://github.com/bdelwood/fauxput/commit/f416cd78b4efc591ba21a24b304ecca936878999) by @bdelwood
+
+### Miscellaneous
+- Add pre-commit to stop making stupid mistakes that anger clippy [`d990164`](https://github.com/bdelwood/fauxput/commit/d99016429002aac02dd91d50cfd8c5a774144cdd)
+- Add Fedora+GNOME VM dev testing setup [`b930a4b`](https://github.com/bdelwood/fauxput/commit/b930a4b294c1f0a44fb3b6ff341ff130da33b472) by @bdelwood
+- Add keywords to cargo [`529b9fa`](https://github.com/bdelwood/fauxput/commit/529b9fa3a7e4b6c87696973c0b07da5e08bba1e7) by @bdelwood
+
 ## [0.5.0] - 2026-05-10
 
 ### Bug Fixes
