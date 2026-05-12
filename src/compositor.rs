@@ -376,9 +376,10 @@ pub trait CompositorAdapter: Send {
     /// Return every head the compositor currently advertises.
     fn snapshot(&mut self) -> Result<OutputSnapshot>;
 
-    /// Block until a head appears whose name is NOT in `baseline_names`.
-    /// Used after a kernel hot-plug to wait for the compositor to
-    /// surface the new connector.
+    /// Block until a head appears whose name is NOT in `baseline`.
+    /// Used after a kernel hot-plug to wait for the compositor to surface
+    /// the new connector. Compositors enumerate hot-added connectors
+    /// asynchronously.
     fn wait_for_new_head(
         &mut self,
         baseline: &HashSet<String>,

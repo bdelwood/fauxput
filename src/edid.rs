@@ -73,6 +73,16 @@ pub struct EdidSpec {
     pub instance_index: u32,
 }
 
+impl EdidSpec {
+    /// Exact refresh, in milli-hertz, that the kernel will advertise for a
+    /// connector running the EDID this spec produces.
+    pub fn refresh_mhz(&self) -> i32 {
+        timing::cvt_rb_v1(self.width, self.height, self.refresh_hz)
+            .map(|t| t.refresh_mhz())
+            .unwrap_or_else(|_| (self.refresh_hz as i32) * 1000)
+    }
+}
+
 /// Convert a string-like value into its redid equiv
 trait ToDescriptorString {
     fn to_descriptor(&self, field: &'static str) -> Result<EdidDescriptorString>;

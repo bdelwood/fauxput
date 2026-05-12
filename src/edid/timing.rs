@@ -40,6 +40,16 @@ impl Timing {
     pub fn v_total(&self) -> u32 {
         self.v_active + self.v_front_porch + self.v_sync_width + self.v_back_porch
     }
+
+    /// Exact refresh rate the kernel will advertise on the connector,
+    ///
+    /// Independent of the timing scheme,
+    /// always `pixel_clock / pixels_per_frame`.
+    pub fn refresh_mhz(&self) -> i32 {
+        let pclk_mhz = self.pixel_clock_khz as f64 * 1_000_000.0;
+        let pixels_per_frame = (self.h_total() as u64 * self.v_total() as u64) as f64;
+        (pclk_mhz / pixels_per_frame).round() as i32
+    }
 }
 
 /// Compute CVT-Reduced-Blanking v1 timing for `width × height @ refresh_hz`.
@@ -149,6 +159,23 @@ mod tests {
                 "v_blank {v_blank_us:.1}us for {w}x{h} below CVT-RB minimum"
             );
         }
+    }
+
+    /// check `refresh_mhz` derives the same number the kernel reports
+    #[test]
+    fn refresh_mhz_canonical() {
+        let t = cvt_rb_v1(1920, 1080, 60).unwrap();
+        assert_eq!(
+            t.refresh_mhz(),
+            59934,
+            "1080p60 CVT-RB advertises 59.934 Hz, not 60.000"
+        );
+        let t = cvt_rb_v1(3840, 2160, 60).unwrap();
+        assert!(
+            (t.refresh_mhz() - 60_000).abs() < 200,
+            "4K60 CVT-RB refresh = {} mHz, expected ~60000",
+            t.refresh_mhz()
+        );
     }
 
     /// Silly inputs and over-DTD pixel clocks must error, not panic.

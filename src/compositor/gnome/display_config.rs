@@ -52,6 +52,13 @@ impl MonitorMode {
             .and_then(|v| bool::try_from(v).ok())
             .unwrap_or(false)
     }
+
+    pub(crate) fn is_preferred(&self) -> bool {
+        self.properties
+            .get("is-preferred")
+            .and_then(|v| bool::try_from(v).ok())
+            .unwrap_or(false)
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub(crate) struct LogicalMonitor {

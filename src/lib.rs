@@ -9,3 +9,6 @@ pub mod state;
 
 // re-exports
 pub use error::{Error, Result};
+
+/// Prefix every fauxput-managed connector shares
+pub const OUTPUT_PREFIX: &str = "fauxput-";

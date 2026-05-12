@@ -66,12 +66,13 @@ pub struct UpRequest {
 }
 
 impl UpRequest {
-    /// Map the requested resolution + refresh into the compositor's `ModeInfo`
+    /// Map the requested resolution + refresh into the compositor's `ModeInfo`.
+    /// Refresh is the exact value the EDID encodes
     fn mode(&self) -> ModeInfo {
         ModeInfo {
             width: self.spec.width as i32,
             height: self.spec.height as i32,
-            refresh_mhz: (self.spec.refresh_hz as i32) * 1000,
+            refresh_mhz: self.spec.refresh_mhz(),
         }
     }
 
@@ -113,19 +114,15 @@ impl<'a> Up<'a> {
         backend.check_available()?;
         let store = StateStore::new();
 
-        let mut compositor = connect_compositor();
-        // Snapshot before the kernel-side create
-        let pre_create = compositor
-            .as_mut()
-            .and_then(|c| c.snapshot().ok())
-            .unwrap_or_default();
+        let compositor = connect_compositor();
 
         let mut up = Self {
             req,
             backend,
             store,
             compositor,
-            pre_create,
+            // Filled in by `create_kernel_side` immediately before backend create
+            pre_create: OutputSnapshot::default(),
         };
 
         // attempt to create the kernel hot-plug
@@ -159,6 +156,15 @@ impl<'a> Up<'a> {
     }
 
     pub fn create_kernel_side(&mut self) -> Result<CreateOutcome> {
+        // Snapshot the compositor immediately before the kernel-side create
+        // so the "new heads" diff against this baseline isn't poisoned by
+        // possibly unrelated state shifts
+        self.pre_create = self
+            .compositor
+            .as_mut()
+            .and_then(|c| c.snapshot().ok())
+            .unwrap_or_default();
+
         let outcome = self.backend.create(&self.req.spec)?;
 
         // Persist the record before we return so a crash anywhere downstream
@@ -336,10 +342,19 @@ impl Down {
         let state = down.store.load()?;
         let mut removed: usize = 0;
 
-        // Newest-first so layout restoration unwinds in the order `up`s
-        // applied their changes.
+        // One compositor restore covering all instances.
+        // Found that per-instance restores would each
+        // disable a single fauxput head and leave the
+        // remaining ones at their original positions
+        // which caused gaps tha tmade mutter mad.
+        if !state.instances.is_empty() {
+            down.restore_compositor(&state.instances);
+        }
+
+        // Kernel-side destroys can happen in any order now that the
+        // compositor's view has been settled in a single apply.
+        // just do newest first.
         for rec in state.instances.iter().rev() {
-            down.restore_compositor(rec);
             if down.backend.destroy(&rec.handle).is_ok() {
                 removed += 1
             }
@@ -349,50 +364,63 @@ impl Down {
         Ok(removed)
     }
 
-    fn restore_compositor(&mut self, rec: &InstanceRecord) {
-        if !rec.compositor_configured {
-            return;
-        }
-
+    /// Build one combined plan that disables every fauxput head, re-enables
+    /// the union of real outputs that any instance had disabled, and sets
+    /// primary back to the original primary.
+    fn restore_compositor(&mut self, instances: &[InstanceRecord]) {
         let Some(comp) = self.compositor.as_mut() else {
             return;
         };
 
-        // Prefer current geometry over the stored snapshot: modes and
-        // positions may have shifted since `up`, and stale values are
-        // more likely to produce a plan the compositor rejects.
+        // Every fauxput head we ever brought up.
+        let to_disable: Vec<String> = instances
+            .iter()
+            .filter(|r| r.compositor_configured)
+            .map(|r| {
+                r.compositor_head_name
+                    .clone()
+                    .unwrap_or_else(|| r.handle.local_id.clone())
+            })
+            .collect();
+
+        // Union of every real output that we disable across any instance.
+        // Need to dedupe if multiple instances disabled the same output.
+        let to_reenable: HashSet<String> = instances
+            .iter()
+            .flat_map(|r| r.layout_changes.disabled_outputs.iter().cloned())
+            .collect();
+
+        // The OLDEST instance's `previous_primary` represents what was
+        // primary before any action
+        let previous_primary = instances
+            .iter()
+            .find_map(|r| r.layout_changes.previous_primary.clone());
+
+        // Prefer current geometry over stored snapshots
         let live = comp.snapshot().ok();
+        let enables: Vec<EnableOutput> = to_reenable
+            .into_iter()
+            .map(|name| {
+                let live_head = live
+                    .as_ref()
+                    .and_then(|s| s.heads.iter().find(|h| h.name == name));
+                EnableOutput {
+                    name,
+                    mode: live_head.and_then(|h| h.mode),
+                    position: live_head.and_then(|h| h.position),
+                }
+            })
+            .collect();
 
-        let mut enables = Vec::new();
-        for name in &rec.layout_changes.disabled_outputs {
-            // Look up this name in the live snapshot, if there is one
-            // missing live data leaves mode/position empty and lets the
-            // compositor fall back to its own defaults.
-            let live_head = live
-                .as_ref()
-                .and_then(|s| s.heads.iter().find(|h| h.name == *name));
-            enables.push(EnableOutput {
-                name: name.clone(),
-                mode: live_head.and_then(|h| h.mode),
-                position: live_head.and_then(|h| h.position),
-            });
-        }
-
-        // kernel slug is a workable fallback target
-        let compositor_head_name = rec
-            .compositor_head_name
-            .clone()
-            .unwrap_or_else(|| rec.handle.local_id.clone());
-
-        // Wrap in an inline closure so `?` lands in this local Result
-        // we want to warn and keep going, not abort the whole down run
+        // Inline closure so `?` lands in this local Result
+        // We want to warn and keep going, not abort the whole down run
         // Seems a bit hacky, but it works.
         let plan: Result<OutputPlan> = (|| {
             let mut builder = OutputPlan::builder()
                 .enable_all(enables)?
-                .disable(compositor_head_name)?;
-            if let Some(name) = &rec.layout_changes.previous_primary {
-                builder = builder.set_primary(name.clone())?;
+                .disable_all(to_disable.iter().cloned())?;
+            if let Some(name) = previous_primary {
+                builder = builder.set_primary(name)?;
             }
             Ok(builder.build())
         })();
@@ -402,16 +430,13 @@ impl Down {
         let plan = match plan {
             Ok(plan) => plan,
             Err(e) => {
-                log::warn!("down: invalid plan for {}: {e:#}", rec.handle.local_id);
+                log::warn!("down: invalid restore plan: {e:#}");
                 return;
             }
         };
 
         if let Err(e) = comp.apply(&plan) {
-            log::warn!(
-                "layout restore & graceful disable failed for {}: {e:#}",
-                rec.handle.local_id
-            );
+            log::warn!("down: compositor restore failed: {e:#}");
         }
     }
 }

@@ -1,8 +1,11 @@
 //! Shared Wayland-client glue (connection, registry, dispatch with context, bounded poll) reused by the wlr and KDE adapters.
 
+use std::os::fd::AsFd;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use rustix::event::{self, PollFd, PollFlags, Timespec};
+use rustix::io::Errno;
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, protocol::wl_registry};
 
 use crate::Result;
@@ -81,36 +84,53 @@ impl<S: 'static> WaylandSession<S> {
         Ok(())
     }
 
-    /// Bounded retry loop. Calls `poll` until it returns `Some(value)` or
-    /// `timeout` elapses, sleeping `interval` between attempts. Used to
-    /// wait for asynchronous server events (e.g. a new head appearing
-    /// after a kernel hot-plug) without blocking forever.
+    /// Bounded event-driven wait. Drains anything sitting on the queue,
+    /// calls `poll`, and, if `poll` returns `None`, blocks on the wayland
+    /// socket itself until either the server sends new events
+    /// or the deadline elapses.
+    /// wake up the moment the compositor writes to its socket
     pub fn poll_until<T, F>(
         &mut self,
         reason: impl Into<String>,
         timeout: Duration,
-        interval: Duration,
         mut poll: F,
     ) -> Result<T>
     where
         F: FnMut(&mut Self) -> Result<Option<T>>,
     {
+        let reason = reason.into();
         let deadline = Instant::now() + timeout;
         loop {
+            self.eq
+                .dispatch_pending(&mut self.state)
+                .map_err(|source| CompositorError::Dispatch {
+                    context: "wayland: dispatch_pending",
+                    source,
+                })?;
             if let Some(value) = poll(self)? {
                 return Ok(value);
             }
-            // Check the deadline after the poll so a single attempt always
-            // gets to run even if the timeout has already elapsed.
-            if Instant::now() >= deadline {
-                return Err(CompositorError::Timeout {
-                    reason: reason.into(),
-                    timeout,
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                return Err(CompositorError::Timeout { reason, timeout }.into());
+            };
+
+            // Block on the wayland fd until events arrive or `remaining` elapses.
+            let fd = self.conn.as_fd();
+            let ts = Timespec {
+                tv_sec: remaining.as_secs() as i64,
+                tv_nsec: remaining.subsec_nanos() as i64,
+            };
+            let mut pollfds = [PollFd::new(&fd, PollFlags::IN)];
+            loop {
+                match event::poll(&mut pollfds, Some(&ts)) {
+                    Ok(_) => break,
+                    Err(Errno::INTR) => continue,
+                    Err(err) => {
+                        log::warn!("wayland fd poll failed: {err}; sleeping briefly and retrying");
+                        thread::sleep(Duration::from_millis(50).min(remaining));
+                        break;
+                    }
                 }
-                .into());
-            }
-            if !interval.is_zero() {
-                thread::sleep(interval);
             }
         }
     }

@@ -25,7 +25,6 @@ use crate::compositor::{
 // polls will wait forever
 // we're not doing anything fancy, timeout after short time
 const APPLY_TIMEOUT: Duration = Duration::from_secs(5);
-const HEAD_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 const MGMT_VERSION: u32 = 19;
 const DEVICE_VERSION: u32 = 20;
@@ -86,22 +85,19 @@ impl KdeCompositor {
 
         // Poll for a non-pending result, bailing early if the manager
         // global disappears mid-wait.
-        let result = self.session.poll_until(
-            format!("kde apply ({ctx})"),
-            APPLY_TIMEOUT,
-            Duration::ZERO,
-            |session| {
-                session.roundtrip(ctx)?;
-                // probably overly defensive, but things happen
-                if !session.state.manager_alive {
-                    return Err(CompositorError::CompositorWentAway.into());
-                }
-                Ok(match session.state.apply_result {
-                    ApplyResult::Pending => None,
-                    _ => Some(std::mem::take(&mut session.state.apply_result)),
-                })
-            },
-        );
+        let result =
+            self.session
+                .poll_until(format!("kde apply ({ctx})"), APPLY_TIMEOUT, |session| {
+                    session.roundtrip(ctx)?;
+                    // probably overly defensive, but things happen
+                    if !session.state.manager_alive {
+                        return Err(CompositorError::CompositorWentAway.into());
+                    }
+                    Ok(match session.state.apply_result {
+                        ApplyResult::Pending => None,
+                        _ => Some(std::mem::take(&mut session.state.apply_result)),
+                    })
+                });
 
         // KWin won't accept a second apply on the same configuration object,
         //  so destroy it regardless of how the poll resolved.
@@ -134,23 +130,21 @@ impl CompositorAdapter for KdeCompositor {
         })
     }
 
-    /// Polls until a head appears whose name wasn't in `baseline`.
-    /// The kernel-side hot-plug is synchronous, but
-    /// KWin advertises the new connector asynchronously.
+    /// Polls until a head not in `baseline` appears. KWin advertises new
+    /// connectors asynchronously after the kernel hot-plug.
     fn wait_for_new_head(
         &mut self,
         baseline: &HashSet<String>,
         timeout: Duration,
     ) -> Result<HeadState> {
-        self.session
-            .poll_until("new kde head", timeout, HEAD_POLL_INTERVAL, |session| {
-                session.roundtrip("kde: head poll")?;
-                Ok(session
-                    .state
-                    .live_heads()
-                    .into_iter()
-                    .find(|head| !baseline.contains(&head.name)))
-            })
+        self.session.poll_until("new kde head", timeout, |session| {
+            session.roundtrip("kde: head poll")?;
+            Ok(session
+                .state
+                .live_heads()
+                .into_iter()
+                .find(|head| !baseline.contains(&head.name)))
+        })
     }
 
     fn apply(&mut self, plan: &OutputPlan) -> Result<()> {
@@ -344,9 +338,8 @@ impl State {
     }
 
     /// Find the mode proxy on a given device whose dimensions and refresh
-    /// rate match `want`. Refresh comparison is loose (within 100 mHz)
-    /// because compositors round 59.94/60-style numbers slightly differently
-    /// than what the user's plan asked for.
+    /// match `want`.
+    /// Exact equality on refresh since we compute it self-consistently throughout
     fn find_mode_proxy(&self, device_name: &str, want: ModeInfo) -> Option<KdeOutputDeviceModeV2> {
         // resolve the connector name into the device's protocol id
         let device_id = self
@@ -355,17 +348,26 @@ impl State {
             .find(|(_, device)| device.name.as_deref() == Some(device_name))
             .map(|(id, _)| *id)?;
 
+        let matches_device = |parent: &u32| *parent == device_id;
+        let matches_dims = |info: &ModeInfo| info.width == want.width && info.height == want.height;
+
         self.modes
             .iter()
-            // find a mode that belongs to this device and matches
-            // dimensions exactly, refresh within rounding tolerance
             .find(|(_, (parent, mode_data))| {
-                *parent == device_id
-                    && mode_data.info.width == want.width
-                    && mode_data.info.height == want.height
-                    && (mode_data.info.refresh_mhz - want.refresh_mhz) < 100
+                matches_device(parent)
+                    && matches_dims(&mode_data.info)
+                    && mode_data.info.refresh_mhz == want.refresh_mhz
             })
-            // hand back its proxy if any
+            .or_else(|| {
+                self.modes
+                    .iter()
+                    .filter(|(_, (parent, mode_data))| {
+                        matches_device(parent) && matches_dims(&mode_data.info)
+                    })
+                    .min_by_key(|(_, (_, mode_data))| {
+                        (mode_data.info.refresh_mhz - want.refresh_mhz).abs()
+                    })
+            })
             .and_then(|(_, (_, mode_data))| mode_data.proxy.clone())
     }
 }

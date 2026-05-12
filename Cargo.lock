@@ -658,6 +658,7 @@ dependencies = [
  "log",
  "pkg-config",
  "redid",
+ "rustix",
  "serde",
  "serde_json",
  "strum",

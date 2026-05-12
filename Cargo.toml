@@ -19,6 +19,7 @@ env_logger = "0.11"
 indexmap = "2"
 libc = "0.2"
 log = "0.4"
+rustix = { version = "1", features = ["event"] }
 # 0.2.0 on crates.io is missing pub re-exports
 # (EdidDetailedTimingPixelClock) that the EdidDescriptorDetailedTiming builder requires
 # TODO: pin to released version when this is fixed

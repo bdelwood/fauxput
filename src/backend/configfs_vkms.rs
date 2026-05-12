@@ -19,7 +19,7 @@ use crate::{Error, Result, backend::FeatureAcceptance};
 
 pub const BACKEND_ID: &str = "configfs-vkms";
 pub const CONFIGFS_VKMS_ROOT: &str = "/sys/kernel/config/vkms";
-pub const INSTANCE_PREFIX: &str = "fauxput-";
+pub use crate::OUTPUT_PREFIX as INSTANCE_PREFIX;
 
 /// Component category dirs that configfs auto-spawns under each instance.
 /// Order matches the kernel's removal expectations — leaves before branches
@@ -195,6 +195,26 @@ impl ConfigfsVkms {
         // -EINVAL if any topology constraint fails (no plane, missing
         // symlink, etc.).
         self.set(&inst.join("enabled"), Payload::Enabled)?;
+
+        // Toggle status to fire HPD. vkms ignores writes that don't
+        // actually change anything, so we disconnect first to make the
+        // reconnect count.
+        //
+        // The 50ms wait gives Mutter time to notice the new card before
+        // its hotplug handler runs. Skip the wait and Mutter ends up
+        // walking a device list that doesn't include us yet, silently
+        // losing the connector.
+        //
+        // KDE doesn't depend on any of this
+        // KWin rebuilds its output list on the bare add uevent,
+        // so the toggle is just here to work around GNOME work.
+        //
+        // TODO: upstream a hotplug call into vkms's enabled=1 configfs
+        // handler, which would let us drop this whole dance. See
+        // VKMS_HPD_PATCH.md.
+        self.set(&connector.join("status"), Payload::ConnectorDisconnected)?;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        self.set(&connector.join("status"), Payload::ConnectorConnected)?;
 
         Ok(FeatureAcceptance { edid_applied })
     }
