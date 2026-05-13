@@ -548,6 +548,7 @@ mod tests {
             height: 1080,
             refresh_hz: 60,
             instance_index: 0,
+            hdr: false,
         }) {
             Ok(o) => o,
             Err(Error::Mkdir { source, .. })
