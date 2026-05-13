@@ -14,12 +14,14 @@ use redid::{
     EdidDescriptorDetailedTimingHorizontal, EdidDescriptorDetailedTimingVertical,
     EdidDescriptorString, EdidDetailedTimingDigitalSeparateSync, EdidDetailedTimingDigitalSync,
     EdidDetailedTimingDigitalSyncKind, EdidDetailedTimingStereo, EdidDetailedTimingSync,
-    EdidDisplayRangePixelClock, EdidDisplayTransferCharacteristics, EdidFilterChromaticity,
-    EdidProductCode, EdidR4BasicDisplayParametersFeatures, EdidR4Descriptor,
-    EdidR4DigitalColorDepth, EdidR4DigitalVideoInputDefinition, EdidR4DisplayColor,
-    EdidR4DisplayRangeLimits, EdidR4DisplayRangeLimitsRangeFreq,
-    EdidR4DisplayRangeVideoTimingsSupport, EdidR4FeatureSupport, EdidR4ImageSize, EdidRelease4,
-    EdidSerialNumber, IntoBytes,
+    EdidDisplayRangePixelClock, EdidDisplayTransferCharacteristics, EdidExtension,
+    EdidExtensionCTA861, EdidExtensionCTA861ColorimetryDataBlock,
+    EdidExtensionCTA861HdrStaticMetadataDataBlock, EdidExtensionCTA861Revision3,
+    EdidExtensionCTA861Revision3DataBlock, EdidFilterChromaticity, EdidProductCode,
+    EdidR4BasicDisplayParametersFeatures, EdidR4Descriptor, EdidR4DigitalColorDepth,
+    EdidR4DigitalVideoInputDefinition, EdidR4DisplayColor, EdidR4DisplayRangeLimits,
+    EdidR4DisplayRangeLimitsRangeFreq, EdidR4DisplayRangeVideoTimingsSupport, EdidR4FeatureSupport,
+    EdidR4ImageSize, EdidRelease4, EdidSerialNumber, IntoBytes,
 };
 
 use crate::{Result, edid::timing::Timing};
@@ -71,6 +73,8 @@ pub struct EdidSpec {
     // used for both EDID serial num and product name string (ie `fauxput-N`)
     // Lifecycle callers pass 0 as placeholder; configfs-vkms re-derives.
     pub instance_index: u32,
+    #[serde(default)]
+    pub hdr: bool,
 }
 
 impl EdidSpec {
@@ -118,7 +122,7 @@ pub fn build(spec: &EdidSpec) -> Result<Vec<u8>> {
     let serial_str = format!("{}x{}@{}", spec.width, spec.height, spec.refresh_hz);
 
     // build the edid description
-    let edid = EdidRelease4::builder()
+    let mut edid = EdidRelease4::builder()
         .manufacturer("FXP".try_into().at("manufacturer")?)
         .product_code(EdidProductCode::from(0x0001u16))
         .serial_number(Some(EdidSerialNumber::from(spec.instance_index)))
@@ -132,12 +136,42 @@ pub fn build(spec: &EdidSpec) -> Result<Vec<u8>> {
             EdidR4Descriptor::DisplayRangeLimits(build_range_limits(&t, spec.refresh_hz)?),
             EdidR4Descriptor::ProductName(product_name.to_descriptor("product_name")?),
             EdidR4Descriptor::ProductSerialNumber(serial_str.to_descriptor("serial_string")?),
-        ])
-        .build();
+        ]);
+
+    if spec.hdr {
+        let colorimetry = EdidExtensionCTA861ColorimetryDataBlock::builder()
+            .bt_2020_ycc(true)
+            .bt_2020_rgb(true)
+            .build();
+
+        let hdr_metadata = EdidExtensionCTA861HdrStaticMetadataDataBlock::builder()
+            .traditional_gamma_sdr(true)
+            .smpte_st2084(true)
+            .bt_2100_hlg(true)
+            .static_metadata_type1(true)
+            .max_luminance(138)
+            .max_avg_luminance(96)
+            .min_luminance(18)
+            .build();
+
+        let cta = EdidExtensionCTA861Revision3::builder()
+            .native_formats(0)
+            .data_blocks(vec![
+                EdidExtensionCTA861Revision3DataBlock::Colorimetry(colorimetry),
+                EdidExtensionCTA861Revision3DataBlock::HDR(hdr_metadata),
+            ])
+            .build();
+        edid = edid.extensions(vec![EdidExtension::CTA861(EdidExtensionCTA861::Revision3(
+            cta,
+        ))]);
+    }
+
+    let edid = edid.build();
 
     let bytes = edid.into_bytes();
     // some sanity checks
-    debug_assert_eq!(bytes.len(), 128, "EDID base block must be 128 bytes");
+    let expected_len = if spec.hdr { 256 } else { 128 };
+    debug_assert_eq!(bytes.len(), expected_len, "EDID length");
     debug_assert_eq!(
         bytes.iter().fold(0u8, |a, b| a.wrapping_add(*b)),
         0,
@@ -287,6 +321,7 @@ mod tests {
             height: h,
             refresh_hz: 60,
             instance_index: 0,
+            hdr: false,
         }
     }
 
