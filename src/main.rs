@@ -47,6 +47,9 @@ enum Commands {
         /// Potentially useful to force the virtual screen as the only screen for new windows.
         #[arg(long)]
         disable_real_outputs: bool,
+
+        #[arg(long)]
+        hdr: bool,
     },
 
     Down,
@@ -80,7 +83,8 @@ fn main() -> ExitCode {
             fps,
             primary,
             disable_real_outputs,
-        } => up(width, height, fps, primary, disable_real_outputs),
+            hdr,
+        } => up(width, height, fps, primary, disable_real_outputs, hdr),
         Commands::Down => down(),
         Commands::Status { json } => status(json),
         Commands::Reset { yes } => reset(yes),
@@ -101,6 +105,7 @@ fn up(
     fps: u32,
     make_primary: bool,
     disable_real_outputs: bool,
+    hdr: bool,
 ) -> Result<()> {
     let outcome = lifecycle::up(&UpRequest {
         spec: EdidSpec {
@@ -110,6 +115,7 @@ fn up(
             // Placeholder: the configfs-vkms backend re-derives this from
             // the slot it allocates so the EDID serial matches the slug.
             instance_index: 0,
+            hdr,
         },
         make_primary,
         disable_real_outputs,
