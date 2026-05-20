@@ -42,7 +42,7 @@ fn connect_compositor() -> Option<Box<dyn CompositorAdapter>> {
     None
 }
 
-/// True if `name` looks like a hardware connector we hould treat as "real"
+/// True if `name` looks like a hardware connector we should treat as "real"
 /// Used to decide which heads `--disable-real-outputs`
 /// should turn off.
 fn is_real_output(name: &str) -> bool {
@@ -182,7 +182,19 @@ impl<'a> Up<'a> {
     }
 
     pub fn attach_compositor(&mut self, handle: &DisplayHandle) -> Result<(i32, i32)> {
-        let (compositor_name, pos) = self.place_new_head()?;
+        let (compositor_name, initial_pos) = self.place_new_head()?;
+
+        // Place at the origin: otherwise the cursor gets pinned off-screen,
+        // at the coordinates the disabled real outputs used to occupy.
+        // Normal apps don't notice:
+        // clicks still land where the visible cursor is
+        // but for full screen apps like games which use `zwp_locked_pointer_v1`, they refuse to engage when the
+        // cursor sits outside the requesting surface.
+        let pos = if self.req.disable_real_outputs {
+            (0, 0)
+        } else {
+            initial_pos
+        };
 
         log::info!(
             "compositor identified new output as {compositor_name:?}, slug {:?}",
@@ -346,7 +358,7 @@ impl Down {
         // Found that per-instance restores would each
         // disable a single fauxput head and leave the
         // remaining ones at their original positions
-        // which caused gaps tha tmade mutter mad.
+        // which caused gaps that made mutter mad.
         if !state.instances.is_empty() {
             down.restore_compositor(&state.instances);
         }
