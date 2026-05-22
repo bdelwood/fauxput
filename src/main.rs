@@ -138,15 +138,12 @@ fn up(
         println!("         falling back to its built-in default mode list");
     }
 
-    if hdr && !outcome.hdr_properties_attached {
+    if hdr && !outcome.hdr_attached {
         println!();
         println!(
-            "{} `--hdr` set but kernel's configfs-vkms doesn't expose",
+            "{} `--hdr` set but HDR didn't fully get enabled by the compositor.",
             "warning:".yellow().bold(),
         );
-        println!("         `supported_colorspaces` on connectors (Chauvet v4 vkms patch)");
-        println!("         EDID still carries the HDR block, but compositors won't see");
-        println!("         HDR_OUTPUT_METADATA / Colorspace DRM properties on this output");
     }
 
     if outcome.compositor_configured {

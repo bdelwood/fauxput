@@ -82,6 +82,7 @@ impl UpRequest {
             name: name.to_string(),
             mode: Some(self.mode()),
             position: Some(position),
+            hdr: Some(self.spec.hdr),
         }
     }
 }
@@ -91,8 +92,8 @@ impl UpRequest {
 pub struct UpOutcome {
     pub handle: DisplayHandle,
     pub edid_applied: bool,
-    /// True iff `--hdr` was set AND the backend wired up the kernel correctly
-    pub hdr_properties_attached: bool,
+    // both backend and compositor need to work for this to be true
+    pub hdr_attached: bool,
     pub compositor_configured: bool,
     pub compositor_position: Option<(i32, i32)>,
 }
@@ -105,6 +106,8 @@ struct Up<'a> {
     compositor: Option<Box<dyn CompositorAdapter>>,
     /// Compositor layout taken before the kernel-side create.
     pre_create: OutputSnapshot,
+    /// Name the compositor surfaced for the new head
+    attached_head_name: Option<String>,
 }
 
 impl<'a> Up<'a> {
@@ -125,6 +128,8 @@ impl<'a> Up<'a> {
             compositor,
             // Filled in by `create_kernel_side` immediately before backend create
             pre_create: OutputSnapshot::default(),
+            // Filled in by `attach_compositor` once it learns the new head's name.
+            attached_head_name: None,
         };
 
         // attempt to create the kernel hot-plug
@@ -147,12 +152,20 @@ impl<'a> Up<'a> {
             }
         }
 
+        // If we have a name from the compositor, check it for hdr
+        // If not, fall back to kernel.
+        let hdr_attached = match up.attached_head_name.clone().as_deref() {
+            _ if !up.req.spec.hdr => true,
+            Some(name) => up.check_hdr_attached(name),
+            None => outcome.feature_acceptance.hdr_applied,
+        };
+
         // The compositor_* fields and edid_applied let the CLI report
         // which parts of the request actually took effect.
         Ok(UpOutcome {
             handle: outcome.handle,
             edid_applied: outcome.feature_acceptance.edid_applied,
-            hdr_properties_attached: outcome.feature_acceptance.hdr_applied,
+            hdr_attached,
             compositor_configured,
             compositor_position,
         })
@@ -214,6 +227,7 @@ impl<'a> Up<'a> {
                 LayoutChanges::default()
             });
 
+        self.attached_head_name = Some(compositor_name.clone());
         self.store.update_instance(&handle.local_id, |rec| {
             rec.compositor_head_name = Some(compositor_name);
             rec.compositor_configured = true;
@@ -221,6 +235,25 @@ impl<'a> Up<'a> {
         })?;
 
         Ok(pos)
+    }
+
+    /// Re-snapshot the compositor and check whether the named head is
+    /// actually in HDR mode now.
+    pub fn check_hdr_attached(&mut self, head_name: &str) -> bool {
+        if !self.req.spec.hdr {
+            return true;
+        }
+        let Some(comp) = self.compositor.as_mut() else {
+            return false;
+        };
+        let Ok(snap) = comp.snapshot() else {
+            return false;
+        };
+        snap.heads
+            .iter()
+            .find(|h| h.name == head_name)
+            .and_then(|h| h.hdr_enabled)
+            .unwrap_or(false)
     }
 
     pub fn place_new_head(&mut self) -> Result<(String, (i32, i32))> {
@@ -435,6 +468,7 @@ fn restore_compositor(
                 position: snap_head
                     .and_then(|h| h.position)
                     .or_else(|| live_head.and_then(|h| h.position)),
+                hdr: snap_head.and_then(|h| h.hdr_enabled),
             }
         })
         .collect();
