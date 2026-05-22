@@ -138,6 +138,17 @@ fn up(
         println!("         falling back to its built-in default mode list");
     }
 
+    if hdr && !outcome.hdr_properties_attached {
+        println!();
+        println!(
+            "{} `--hdr` set but kernel's configfs-vkms doesn't expose",
+            "warning:".yellow().bold(),
+        );
+        println!("         `supported_colorspaces` on connectors (Chauvet v4 vkms patch)");
+        println!("         EDID still carries the HDR block, but compositors won't see");
+        println!("         HDR_OUTPUT_METADATA / Colorspace DRM properties on this output");
+    }
+
     if outcome.compositor_configured {
         if let Some((x, y)) = outcome.compositor_position {
             println!(
