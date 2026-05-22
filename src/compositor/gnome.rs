@@ -167,15 +167,19 @@ impl OutputPlan {
                 continue;
             };
 
-            // Preserve position rule
+            // Position priority:
+            //   1. Explicit position in the plan
+            //   2. Current live position from mutter
+            //   3. Pack to the right of monitors already placed
             let existing = state
                 .logical_monitors
                 .iter()
                 .find(|lm| lm.monitors.iter().any(|m| m.connector == enable.name));
 
-            let (x, y) = match existing {
-                Some(lm) => (lm.x, lm.y),
-                None => (right_edge(&result, state), 0),
+            let (x, y) = match (enable.position, existing) {
+                (Some((px, py)), _) => (px, py),
+                (None, Some(lm)) => (lm.x, lm.y),
+                (None, None) => (right_edge(&result, state), 0),
             };
 
             // Primary rule
@@ -201,7 +205,25 @@ impl OutputPlan {
             });
         }
 
-        // Anythin not in result is disabled by omission
+        // Anything not in result is disabled by omission
+
+        // Safety net: Mutter rejects non-origin-anchored layouts with
+        // "org.freedesktop.DBus.Error.InvalidArgs: Logical monitors positions
+        // are offset". Need to preserve correct offsets.
+        if let Some(min_x) = result.iter().map(|lm| lm.x).min()
+            && min_x != 0
+        {
+            for lm in &mut result {
+                lm.x -= min_x;
+            }
+        }
+        if let Some(min_y) = result.iter().map(|lm| lm.y).min()
+            && min_y != 0
+        {
+            for lm in &mut result {
+                lm.y -= min_y;
+            }
+        }
         result
     }
 }
@@ -257,7 +279,7 @@ impl GnomeCompositor {
                 .into());
             }
         };
-        eprintln!("gnome: GetCurrentState returned {state:#?}");
+        log::debug!("gnome: GetCurrentState returned {state:#?}");
 
         Ok(Some(Self { conn }))
     }
