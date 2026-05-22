@@ -8,6 +8,7 @@ use std::time::Duration;
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, protocol::wl_registry};
 use wayland_protocols_plasma::output_device::v2::client::{
     kde_output_device_mode_v2::{self, KdeOutputDeviceModeV2},
+    kde_output_device_registry_v2::{self, KdeOutputDeviceRegistryV2},
     kde_output_device_v2::{self, KdeOutputDeviceV2},
 };
 use wayland_protocols_plasma::output_management::v2::client::{
@@ -28,6 +29,7 @@ const APPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const MGMT_VERSION: u32 = 19;
 const DEVICE_VERSION: u32 = 20;
+const DEVICE_REGISTRY_VERSION: u32 = 23;
 
 pub struct KdeCompositor {
     session: WaylandSession<State>,
@@ -48,6 +50,18 @@ impl KdeCompositor {
         let Some(manager) = session.state.manager.take() else {
             return Ok(None);
         };
+
+        // Fail loud if we're missing protocols
+        if session.state.device_registry.is_none() && session.state.devices.is_empty() {
+            return Err(CompositorError::MissingProtocol {
+                compositor: "KWin",
+                manager: "kde_output_management_v2",
+                expected: "kde_output_device_registry_v2 (Plasma 6.7+) or \
+                           kde_output_device_v2 (Plasma ≤6.6)",
+                hint: "kde_output_",
+            }
+            .into());
+        }
 
         session.state.manager_alive = true;
 
@@ -137,13 +151,21 @@ impl CompositorAdapter for KdeCompositor {
         baseline: &HashSet<String>,
         timeout: Duration,
     ) -> Result<HeadState> {
+        let start = std::time::Instant::now();
         self.session.poll_until("new kde head", timeout, |session| {
             session.roundtrip("kde: head poll")?;
-            Ok(session
-                .state
-                .live_heads()
+            let heads = session.state.live_heads();
+            let names: Vec<String> = heads.iter().map(|h| h.name.clone()).collect();
+            let new = heads
                 .into_iter()
-                .find(|head| !baseline.contains(&head.name)))
+                .find(|head| !baseline.contains(&head.name));
+            log::debug!(
+                "kde head poll t={}ms heads={:?} new={:?}",
+                start.elapsed().as_millis(),
+                names,
+                new.as_ref().map(|h| h.name.as_str()),
+            );
+            Ok(new)
         })
     }
 
@@ -256,6 +278,10 @@ struct State {
     manager_registry_name: Option<u32>,
     /// Sticky liveness flag.
     manager_alive: bool,
+    /// Bound output-device registry proxy (Plasma 6.7+).
+    device_registry: Option<KdeOutputDeviceRegistryV2>,
+    /// Numeric registry name for the device registry.
+    device_registry_name: Option<u32>,
     /// Devices keyed by their wayland protocol id.
     devices: IndexMap<u32, Device>,
     /// Modes keyed by protocol id, paired with the parent device id
@@ -401,9 +427,23 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     ));
                     state.manager_registry_name = Some(name);
                 }
-                // One device per output. Binding gives us the proxy that
-                // receives the per-head property events the snapshot code
-                // reads from.
+                // Output-device registry (Plasma 6.7+).
+                // One global that emits an `output` event per existing/new device
+                // replaces the per-device-global pattern below.
+                "kde_output_device_registry_v2" => {
+                    let bind_version = version.min(DEVICE_REGISTRY_VERSION);
+                    let proxy = registry.bind::<KdeOutputDeviceRegistryV2, _, _>(
+                        name,
+                        bind_version,
+                        qhandle,
+                        (),
+                    );
+                    state.device_registry = Some(proxy);
+                    state.device_registry_name = Some(name);
+                }
+                // Legacy: one device per output as a wl_registry global.
+                // Kept for Plasma <=6.6 compatibility
+                // PAssed 6.7 this isn't advertised
                 "kde_output_device_v2" => {
                     let bind_version = version.min(DEVICE_VERSION);
                     let device =
@@ -420,6 +460,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 if state.manager_registry_name == Some(name) {
                     state.manager_alive = false;
                     state.manager_registry_name = None;
+                    return;
+                }
+                // Device registry removed
+                if state.device_registry_name == Some(name) {
+                    state.device_registry = None;
+                    state.device_registry_name = None;
                     return;
                 }
                 // Device removed: a real monitor was unplugged. Drop the
@@ -455,6 +501,31 @@ impl Dispatch<KdeOutputManagementV2, ()> for State {
         _qhandle: &QueueHandle<Self>,
     ) {
         // do nothing here
+    }
+}
+
+/// Receives a `KdeOutputDeviceV2` proxy for every existing and newly connected output.
+impl Dispatch<KdeOutputDeviceRegistryV2, ()> for State {
+    // Opcode 1 because `finished` (destructor) takes opcode 0.
+    wayland_client::event_created_child!(State, KdeOutputDeviceRegistryV2, [
+        1 => (KdeOutputDeviceV2, ()),
+    ]);
+
+    fn event(
+        state: &mut Self,
+        _registry: &KdeOutputDeviceRegistryV2,
+        event: <KdeOutputDeviceRegistryV2 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        use kde_output_device_registry_v2::Event::*;
+        if let Output { output } = event {
+            // No registry_name because this device isn't a wl_registry global
+            let id = output.id().protocol_id();
+            let entry = state.devices.entry(id).or_default();
+            entry.proxy = Some(output);
+        }
     }
 }
 
