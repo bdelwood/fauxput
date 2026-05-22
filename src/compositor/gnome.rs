@@ -1,7 +1,8 @@
 mod display_config;
 
 use self::display_config::{
-    CurrentState, DisplayConfigProxyBlocking, LogicalMonitorConfig, Method, MonitorConfig,
+    ApplyPropertyMap, CurrentState, DisplayConfigProxyBlocking, LogicalMonitorConfig, Method,
+    MonitorConfig,
 };
 use crate::Result;
 use crate::compositor::{
@@ -28,6 +29,14 @@ impl From<CurrentState> for OutputSnapshot {
                         .any(|id| id.connector == monitor.id.connector)
                 });
 
+                // set `color-mode` to 1 to enable HDR in mutter
+                let hdr_enabled = logical.and_then(|l| {
+                    l.properties
+                        .get("color-mode")
+                        .and_then(|v| u32::try_from(v).ok())
+                        .map(|m| m == 1)
+                });
+
                 HeadState {
                     name: monitor.id.connector.clone(),
                     enabled: logical.is_some(),
@@ -43,6 +52,7 @@ impl From<CurrentState> for OutputSnapshot {
                     position: logical.map(|l| (l.x, l.y)),
                     scale: logical.map(|l| l.scale),
                     transform: logical.and_then(|l| Transform::try_from(l.transform).ok()),
+                    hdr_enabled,
                 }
             })
             .collect();
@@ -99,6 +109,15 @@ impl OutputPlan {
                 continue;
             }
 
+            // Carry forward the existing color-mode for untouched
+            // logical monitors so that re-applying a plan doesn't
+            // silently revert HDR-enabled monitors to SDR.
+            let mut properties: ApplyPropertyMap = HashMap::new();
+            if let Some(cm) = lm.properties.get("color-mode")
+                && let Ok(cm) = cm.try_clone()
+            {
+                properties.insert("color-mode".to_string(), cm);
+            }
             result.push(LogicalMonitorConfig {
                 x: lm.x,
                 y: lm.y,
@@ -107,6 +126,7 @@ impl OutputPlan {
                 // Plan-declared primary clears every other primary marker.
                 primary: if plan_sets_primary { false } else { lm.primary },
                 monitors,
+                properties,
             });
         }
 
@@ -190,6 +210,18 @@ impl OutputPlan {
                 None => existing.map(|lm| lm.primary).unwrap_or(false),
             };
 
+            // 0 = SDR default, 1 = bt2100 HDR.
+            // Absent key = leave whatever the monitor had
+            let mut properties: ApplyPropertyMap = HashMap::new();
+            if let Some(want_hdr) = enable.hdr {
+                let color_mode: u32 = if want_hdr { 1 } else { 0 };
+                properties.insert(
+                    "color-mode".to_string(),
+                    zbus::zvariant::Value::U32(color_mode)
+                        .try_to_owned()
+                        .unwrap(),
+                );
+            }
             result.push(LogicalMonitorConfig {
                 x,
                 y,
@@ -202,6 +234,7 @@ impl OutputPlan {
                     id: mode.id.clone(),
                     properties: HashMap::new(),
                 }],
+                properties,
             });
         }
 
@@ -311,9 +344,9 @@ impl CompositorAdapter for GnomeCompositor {
         "gnome"
     }
 
-    /// Features mutter natively honors
+    /// Features mutter natively honors.
     fn supported_features(&self) -> HashSet<FeatureKind> {
-        HashSet::from([FeatureKind::Primary])
+        HashSet::from([FeatureKind::Primary, FeatureKind::Hdr])
     }
 
     fn snapshot(&mut self) -> Result<OutputSnapshot> {
