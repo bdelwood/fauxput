@@ -1,0 +1,178 @@
+#cloud-config
+# First-boot provisioning for the fauxput Sway/wlroots test VM.
+
+hostname: fauxput-test-sway
+fqdn: fauxput-test-sway.local
+
+users:
+  - name: test
+    groups: [wheel, input, video]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: false
+    plain_text_passwd: test
+    shell: /bin/bash
+
+ssh_pwauth: true
+
+packages:
+  - libxcvt
+  - openssh-server
+  - edid-decode
+  - jq
+  - selinux-policy-targeted
+  - bats
+
+write_files:
+  # Auto-login on tty1 via getty drop-in.
+  - path: /etc/systemd/system/getty@tty1.service.d/autologin.conf
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=-/sbin/agetty --autologin test --noclear %I $TERM
+  # Auto-load vkms at boot.
+  - path: /etc/modules-load.d/vkms.conf
+    content: |
+      vkms
+  # Suppress vkms's default device — ghost "Unknown Display" in Settings otherwise.
+  - path: /etc/modprobe.d/vkms.conf
+    content: |
+      options vkms create_default_dev=0
+  # Launch sway when test logs in on tty1 (and only on tty1, so SSH stays sane).
+  - path: /home/test/.bash_profile
+    defer: true
+    owner: test:test
+    permissions: '0644'
+    content: |
+      if [ -z "${WAYLAND_DISPLAY:-}" ] && [ "${XDG_VTNR:-}" = "1" ]; then
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          exec sway
+      fi
+  - path: /home/test/.config/sway/config
+    defer: true
+    owner: test:test
+    permissions: '0644'
+    content: |
+      # fauxput wlroots test session — minimal but interactive.
+
+      # Keybindings.
+      set $mod Mod4
+      bindsym $mod+Return exec foot
+      bindsym $mod+d exec wdisplays
+      bindsym $mod+q kill
+      bindsym $mod+Shift+e exit
+      floating_modifier $mod normal
+
+      # Look + feel.
+      output * bg #002b36 solid_color
+      font pango:monospace 10
+
+      # Status bar with launcher buttons.
+      exec waybar
+
+      # Test harness hook — snapshot outputs to a stable path on each
+      # output change so test scripts can diff without polling swaymsg.
+      exec_always swaymsg -t get_outputs > /tmp/sway-outputs.json
+  - path: /home/test/.config/waybar/config.jsonc
+    defer: true
+    owner: test:test
+    permissions: '0644'
+    content: |
+      {
+          "layer": "top",
+          "position": "top",
+          "height": 32,
+          "modules-left": ["custom/terminal", "custom/displays"],
+          "modules-center": ["sway/workspaces"],
+          "modules-right": ["clock"],
+          "custom/terminal": {
+              "format": "  Terminal  ",
+              "tooltip": false,
+              "on-click": "foot"
+          },
+          "custom/displays": {
+              "format": "  Displays  ",
+              "tooltip": false,
+              "on-click": "wdisplays"
+          },
+          "sway/workspaces": {
+              "disable-scroll": true
+          },
+          "clock": {
+              "format": "{:%H:%M:%S}",
+              "interval": 1
+          }
+      }
+  - path: /home/test/.config/waybar/style.css
+    defer: true
+    owner: test:test
+    permissions: '0644'
+    content: |
+      * {
+          font-family: monospace;
+          font-size: 14px;
+          min-height: 0;
+      }
+      window#waybar {
+          background: #002b36;
+          color: #93a1a1;
+      }
+      #custom-terminal, #custom-displays {
+          padding: 0 4px;
+          margin: 4px 4px;
+          background: #073642;
+          border-radius: 4px;
+      }
+      #custom-terminal:hover, #custom-displays:hover {
+          background: #586e75;
+          color: #fdf6e3;
+      }
+      #workspaces button {
+          padding: 0 8px;
+          color: #93a1a1;
+          background: transparent;
+      }
+      #workspaces button.focused {
+          color: #fdf6e3;
+          background: #073642;
+      }
+      #clock {
+          padding: 0 12px;
+      }
+  # SELinux permissive to keep incus agent working
+  - path: /etc/selinux/config
+    defer: true
+    content: |
+      SELINUX=permissive
+      SELINUXTYPE=targeted
+  # Install dkms + vkms-edid, handling the Fedora cloud image kernel race:
+  # repos have moved past the image's kernel (7.0.4) to 7.0.6, so dkms's
+  # rich-dep pulls 7.0.6 as a side effect. Accept the upgrade, build DKMS
+  # for the new kernel, pivot boot to it.
+  - path: /usr/local/sbin/install-vkms-edid.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euxo pipefail
+      dnf install -y dkms gcc kernel-modules kernel-modules-extra
+      NEW_KERNEL=$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core | sort -V | tail -1)
+      until [ -f /mnt/vkms-src/dkms.conf ]; do sleep 1; done
+      cp -rT /mnt/vkms-src /usr/src/vkms-edid-0.1
+      dkms add -m vkms-edid -v 0.1
+      dkms install -m vkms-edid -v 0.1 -k "$NEW_KERNEL"
+      dracut -f --kver "$NEW_KERNEL"
+      RUNNING_KERNEL=$(uname -r)
+      if [ "$RUNNING_KERNEL" != "$NEW_KERNEL" ]; then
+          find /boot/loader/entries -name "*${RUNNING_KERNEL}*.conf" -exec mv {} /tmp/ \;
+          grub2-mkconfig -o /boot/grub2/grub.cfg
+      fi
+
+runcmd:
+  - systemctl enable --now sshd
+  # Install + build patched vkms (handles kernel upgrade internally).
+  - /usr/local/sbin/install-vkms-edid.sh
+  # Sway + wlroots stack. Exclude kernel-* so GTK/Mesa deps can't pull
+  # *another* kernel upgrade beyond what install-vkms-edid.sh settled on.
+  - dnf install -y --exclude='kernel*' sway swaybg foot waybar wdisplays wlr-randr
+  - loginctl enable-linger test
+  # No graphical.target — sway runs from tty1 getty autologin.
+  - systemctl set-default multi-user.target

@@ -1,8 +1,8 @@
 #cloud-config
 # First-boot provisioning for the fauxput Mutter/GNOME test VM.
 
-hostname: fauxput-test
-fqdn: fauxput-test.local
+hostname: fauxput-test-gnome
+fqdn: fauxput-test-gnome.local
 
 users:
   - name: test
@@ -15,12 +15,12 @@ users:
 ssh_pwauth: true
 
 packages:
-  - dkms
-  - gcc                # for the DKMS build
-  - libxcvt            # fauxput's only non-libc dynamic dep
-  - openssh-server     # not in the F43 cloud base
-  - epiphany           # GNOME Web — for the Sunshine pairing UI
-  # Sunshine runtime deps (the RPM pulls most of these; explicit to fail fast).
+  - libxcvt
+  - openssh-server
+  # for sunshine pairing
+  - epiphany
+  - bats
+  # Sunshine runtime deps
   - ffmpeg-free
   - libdrm
   - libcap
@@ -78,26 +78,40 @@ write_files:
     content: |
       SELINUX=permissive
       SELINUXTYPE=targeted
+  # Install dkms + vkms-edid, handling the Fedora cloud image kernel race:
+  # repos have moved past the image's kernel (7.0.4) to 7.0.6, so dkms's
+  # rich-dep pulls 7.0.6 as a side effect. Accept the upgrade, build DKMS
+  # for the new kernel, pivot boot to it.
+  - path: /usr/local/sbin/install-vkms-edid.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euxo pipefail
+      dnf install -y dkms gcc kernel-modules kernel-modules-extra
+      NEW_KERNEL=$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core | sort -V | tail -1)
+      until [ -f /mnt/vkms-src/dkms.conf ]; do sleep 1; done
+      cp -rT /mnt/vkms-src /usr/src/vkms-edid-0.1
+      dkms add -m vkms-edid -v 0.1
+      dkms install -m vkms-edid -v 0.1 -k "$NEW_KERNEL"
+      dracut -f --kver "$NEW_KERNEL"
+      RUNNING_KERNEL=$(uname -r)
+      if [ "$RUNNING_KERNEL" != "$NEW_KERNEL" ]; then
+          find /boot/loader/entries -name "*${RUNNING_KERNEL}*.conf" -exec mv {} /tmp/ \;
+          grub2-mkconfig -o /boot/grub2/grub.cfg
+      fi
 
 runcmd:
   - systemctl enable --now sshd
-  # kernel-devel matched to the running kernel; fallback to latest.
-  - dnf install -y "kernel-devel-$(uname -r)" "kernel-headers-$(uname -r)" || dnf install -y kernel-devel kernel-headers
-  # Minimal GNOME: Mutter + shell + gdm + session.
-  - dnf install -y @gnome-desktop
-  # install patched vkms
-  - until [ -f /mnt/vkms-src/dkms.conf ]; do sleep 1; done
-  - cp -rT /mnt/vkms-src /usr/src/vkms-edid-0.1
-  - dkms add -m vkms-edid -v 0.1
-  - dkms install -m vkms-edid -v 0.1
-  # Rebuild initramfs so the early-boot vkms load picks up modprobe.d.
-  - dracut -f
+  # Install + build patched vkms (handles kernel upgrade internally).
+  - /usr/local/sbin/install-vkms-edid.sh
+  # Minimal GNOME: Mutter + shell + gdm + session. Exclude kernel-* so the
+  # @gnome-desktop weak-dep chain can't pull *another* kernel upgrade.
+  - dnf install -y --exclude='kernel*' @gnome-desktop
   # Install Sunshine + seed dev creds.
-  - dnf install -y https://github.com/LizardByte/Sunshine/releases/download/v2026.508.45922/Sunshine-2026.508.45922-1.fc43.x86_64.rpm
+  - dnf install -y https://github.com/LizardByte/Sunshine/releases/download/v2026.516.143833/Sunshine-2026.516.143833-1.fc44.x86_64.rpm
   - sudo -iu test sunshine --creds admin admin
   - chown -R test:test /home/test/.config
   # Start sunshine. Unit has the Flathub-style reverse-DNS name in 2026.x.
   - sudo -iu test systemctl --user enable app-dev.lizardbyte.app.Sunshine.service
   - loginctl enable-linger test
   - systemctl set-default graphical.target
-
