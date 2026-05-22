@@ -130,9 +130,9 @@ impl CompositorAdapter for KdeCompositor {
         "kde"
     }
 
-    /// Features KWin natively honors
+    /// Features KWin natively honors.
     fn supported_features(&self) -> HashSet<FeatureKind> {
-        HashSet::from([FeatureKind::Primary])
+        HashSet::from([FeatureKind::Primary, FeatureKind::Hdr])
     }
 
     /// Force a fresh roundtrip so
@@ -234,6 +234,15 @@ impl CompositorAdapter for KdeCompositor {
                 // priority resets to 0 unless re-asserted on every apply
                 cfg.set_priority(&proxy, priorities[&head.name]);
                 touched += 1;
+
+                // kwin needs both HDR + wide-color-gamut set
+                if let Some(want_hdr) = target.hdr
+                    && head.hdr_enabled != Some(want_hdr)
+                {
+                    cfg.set_high_dynamic_range(&proxy, want_hdr.into());
+                    cfg.set_wide_color_gamut(&proxy, want_hdr.into());
+                    touched += 2;
+                }
             }
             Ok(touched)
         })
@@ -245,6 +254,7 @@ struct Target {
     enabled: bool,
     mode: Option<ModeInfo>,
     position: Option<(i32, i32)>,
+    hdr: Option<bool>,
 }
 
 impl Target {
@@ -261,6 +271,7 @@ impl Target {
             position: enable_entry
                 .and_then(|entry| entry.position)
                 .or(head.position),
+            hdr: enable_entry.and_then(|entry| entry.hdr),
         }
     }
 }
@@ -303,6 +314,9 @@ struct Device {
     position: Option<(i32, i32)>,
     scale: Option<f64>,
     transform: Option<Transform>,
+    // TODO: should we track these together?
+    hdr_enabled: Option<bool>,
+    wcg_enabled: Option<bool>,
     // to prevent races against initialization
     done_seen: bool,
 }
@@ -350,6 +364,7 @@ impl State {
             position: device.position,
             scale: device.scale,
             transform: device.transform,
+            hdr_enabled: device.hdr_enabled,
         }
     }
 
@@ -582,6 +597,8 @@ impl Dispatch<KdeOutputDeviceV2, ()> for State {
                     entry.current_mode = Some(mode_id);
                 }
             }
+            HighDynamicRange { hdr_enabled } => entry.hdr_enabled = Some(hdr_enabled != 0),
+            WideColorGamut { wcg_enabled } => entry.wcg_enabled = Some(wcg_enabled != 0),
             Done => entry.done_seen = true,
             _ => {}
         }
@@ -676,6 +693,7 @@ mod tests {
             position: None,
             scale: None,
             transform: None,
+            hdr_enabled: None,
         }
     }
 
@@ -735,6 +753,7 @@ mod tests {
                 name: "fauxput-0".into(),
                 mode: Some(mode),
                 position: Some((100, 0)),
+                hdr: None,
             })
             .unwrap()
             .set_primary("DP-2")

@@ -89,6 +89,7 @@ impl OutputSnapshot {
                     name: h.name.clone(),
                     mode: Some(mode),
                     position: Some(position),
+                    hdr: h.hdr_enabled,
                 })
             })
             .collect()
@@ -106,6 +107,8 @@ pub struct HeadState {
     pub position: Option<(i32, i32)>,
     pub scale: Option<f64>,
     pub transform: Option<Transform>,
+    #[serde(default)]
+    pub hdr_enabled: Option<bool>,
 }
 
 /// Resolution and refresh rate. Refresh is in milli-hertz to match the
@@ -194,7 +197,9 @@ impl TryFrom<u32> for Transform {
 pub enum Feature {
     // Mark a head as primary
     Primary { output_name: String },
-    // TODO: HDR, VRR, tearing?
+
+    Hdr { output_name: String },
+    // TODO: VRR, tearing?
 }
 
 /// What a caller wants the compositor to do.
@@ -274,6 +279,12 @@ impl OutputPlanBuilder {
                 refresh: m.refresh_mhz,
             }
             .into());
+        }
+
+        if matches!(output.hdr, Some(true)) {
+            self.features.push(Feature::Hdr {
+                output_name: output.name.clone(),
+            });
         }
         self.enables.push(output);
         Ok(self)
@@ -373,6 +384,7 @@ pub struct EnableOutput {
     pub name: String,
     pub mode: Option<ModeInfo>,
     pub position: Option<(i32, i32)>,
+    pub hdr: Option<bool>,
 }
 
 /// Compositor-side interface: snapshot the current output layout, wait for
@@ -437,6 +449,7 @@ mod tests {
             name: name.into(),
             mode: None,
             position: None,
+            hdr: None,
         }
     }
 
@@ -461,6 +474,7 @@ mod tests {
                     position: Some((0, 0)),
                     scale: Some(1.5),
                     transform: Some(Transform::Normal),
+                    hdr_enabled: Some(true),
                 },
                 // All-None head exercises the `Option` fields' serde shape.
                 HeadState {
@@ -470,6 +484,7 @@ mod tests {
                     position: None,
                     scale: None,
                     transform: None,
+                    hdr_enabled: None,
                 },
             ],
         };
@@ -543,6 +558,7 @@ mod tests {
             name: String::new(),
             mode: None,
             position: None,
+            hdr: None,
         });
         assert!(matches!(r, Err(Error::Plan(PlanError::EmptyName))));
 
@@ -576,6 +592,7 @@ mod tests {
                 refresh_mhz: 60_000,
             }),
             position: None,
+            hdr: None,
         });
         assert!(matches!(
             r,
