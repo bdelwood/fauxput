@@ -43,6 +43,9 @@ pub struct FeatureAcceptance {
     /// True iff the kernel accepted the EDID write. False on backends or
     /// kernels that fall back to default modes.
     pub edid_applied: bool,
+    /// True iff the kernel accepted both the connector `type` (DP) and `supported_colorspaces`
+    #[serde(default)]
+    pub hdr_applied: bool,
 }
 
 pub trait DisplayBackend: Send + Sync {
