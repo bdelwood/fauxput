@@ -18,7 +18,8 @@ DISABLE_FLAG=( --disable-real-outputs )
 HDR_FLAG=()
 [[ "${HDR}" == "true" || "${HDR}" == "1" ]] && HDR_FLAG=( --hdr )
 
-exec fauxput up \
+exec systemd-cat -t fauxput-sunshine --level-prefix=false \
+    fauxput up -vv \
     --width "${WIDTH}" \
     --height "${HEIGHT}" \
     --fps "${FPS}" \
