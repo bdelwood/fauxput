@@ -1527,7 +1527,7 @@ dependencies = [
 [[package]]
 name = "wayland-backend"
 version = "0.3.15"
-source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#ecce8e6d61d28ecb43871e8b5899f5dcc92656a2"
+source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#017830f31fd152cd9a06e613df086d635d25f719"
 dependencies = [
  "cc",
  "downcast-rs",
@@ -1539,7 +1539,7 @@ dependencies = [
 [[package]]
 name = "wayland-client"
 version = "0.31.14"
-source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#ecce8e6d61d28ecb43871e8b5899f5dcc92656a2"
+source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#017830f31fd152cd9a06e613df086d635d25f719"
 dependencies = [
  "bitflags",
  "rustix",
@@ -1550,7 +1550,7 @@ dependencies = [
 [[package]]
 name = "wayland-protocols"
 version = "0.32.12"
-source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#ecce8e6d61d28ecb43871e8b5899f5dcc92656a2"
+source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#017830f31fd152cd9a06e613df086d635d25f719"
 dependencies = [
  "bitflags",
  "wayland-backend",
@@ -1561,7 +1561,7 @@ dependencies = [
 [[package]]
 name = "wayland-protocols-plasma"
 version = "0.3.12"
-source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#ecce8e6d61d28ecb43871e8b5899f5dcc92656a2"
+source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#017830f31fd152cd9a06e613df086d635d25f719"
 dependencies = [
  "bitflags",
  "wayland-backend",
@@ -1573,7 +1573,7 @@ dependencies = [
 [[package]]
 name = "wayland-scanner"
 version = "0.31.10"
-source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#ecce8e6d61d28ecb43871e8b5899f5dcc92656a2"
+source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#017830f31fd152cd9a06e613df086d635d25f719"
 dependencies = [
  "proc-macro2",
  "quick-xml",
@@ -1583,7 +1583,7 @@ dependencies = [
 [[package]]
 name = "wayland-sys"
 version = "0.31.11"
-source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#ecce8e6d61d28ecb43871e8b5899f5dcc92656a2"
+source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#017830f31fd152cd9a06e613df086d635d25f719"
 dependencies = [
  "pkg-config",
 ]
