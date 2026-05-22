@@ -52,6 +52,20 @@ pub enum CompositorError {
     /// Uh oh, the output-management global disappeared mid-operation
     #[error("compositor went away mid-operation (manager global removed)")]
     CompositorWentAway,
+
+    /// A required wayland global wasn't advertised by the compositor.
+    /// Bubble up missing protocols to fail fast.
+    #[error(
+        "{compositor} advertises {manager} but no device-side global ({expected}). \
+         Inspect with `wayland-info | grep {hint}` — if a new global appears that \
+         fauxput doesn't recognize, the protocol bindings need updating."
+    )]
+    MissingProtocol {
+        compositor: &'static str,
+        manager: &'static str,
+        expected: &'static str,
+        hint: &'static str,
+    },
 }
 
 /// Snapshot of every head the compositor advertises.
