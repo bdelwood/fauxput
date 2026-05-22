@@ -52,6 +52,12 @@ enum Payload {
     PlanePrimary,
     ConnectorConnected,
     ConnectorDisconnected,
+    /// `DRM_MODE_CONNECTOR_DisplayPort` (10). Chauvet's v4 vkms patches
+    /// The vkms patch HDR work only picks up HDR for DP, HDMI, and eDP connector types
+    // TODO: revisit later when virtual EDID has maturedset.
+    ConnectorTypeDp,
+    // bitmask
+    ColorspacesBt2020Hdr,
 }
 
 impl Payload {
@@ -60,6 +66,8 @@ impl Payload {
             Self::Enabled | Self::PlanePrimary | Self::ConnectorConnected => b"1\n",
             Self::Disabled => b"0\n",
             Self::ConnectorDisconnected => b"2\n",
+            Self::ConnectorTypeDp => b"10\n",
+            Self::ColorspacesBt2020Hdr => b"1536\n",
         }
     }
 }
@@ -136,9 +144,9 @@ impl ConfigfsVkms {
 
     /// Forward-walk the configfs schema, recording mkdirs and symlink for rollback
     /// On any failure, replay the log in reverse
-    fn build(&self, name: &str, edid: &[u8]) -> Result<FeatureAcceptance> {
+    fn build(&self, name: &str, spec: &EdidSpec) -> Result<FeatureAcceptance> {
         let mut ops: Vec<Op> = Vec::new();
-        self.commit(name, edid, &mut ops).inspect_err(|e| {
+        self.commit(name, spec, &mut ops).inspect_err(|e| {
             log::warn!(
                 "build of {name} failed ({e}); rolling back {} ops",
                 ops.len()
@@ -148,7 +156,9 @@ impl ConfigfsVkms {
     }
 
     // Walks the configfs schema, logging each step so the caller can unwind on failure.
-    fn commit(&self, name: &str, edid: &[u8], ops: &mut Vec<Op>) -> Result<FeatureAcceptance> {
+    fn commit(&self, name: &str, spec: &EdidSpec, ops: &mut Vec<Op>) -> Result<FeatureAcceptance> {
+        let edid_bytes = edid::build(spec)?;
+        log::debug!("generated {} bytes of EDID", edid_bytes.len());
         let inst = self.root.join(name);
         // Top-level instance directory. Configfs auto-populates the empty
         // {planes, crtcs, encoders, connectors} subdirs.
@@ -178,12 +188,28 @@ impl ConfigfsVkms {
         // Bubble up the `edid_applied` so the CLI can warn the user.
         let edid_path = connector.join("edid");
         let edid_applied = if edid_path.exists() {
-            self.write_attr(&edid_path, edid)?;
+            self.write_attr(&edid_path, &edid_bytes)?;
             self.set(&connector.join("edid_enabled"), Payload::Enabled)?;
             true
         } else {
             false
         };
+
+        // HDR: set connector type to DisplayPort + advertise BT.2020 colorspaces.
+        let hdr_applied = if spec.hdr {
+            let type_path = connector.join("type");
+            let scs_path = connector.join("supported_colorspaces");
+            if type_path.exists() && scs_path.exists() {
+                self.set(&type_path, Payload::ConnectorTypeDp)?;
+                self.set(&scs_path, Payload::ColorspacesBt2020Hdr)?;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         self.set(&connector.join("status"), Payload::ConnectorConnected)?;
 
         // Symlinks expressing the topology.
@@ -216,7 +242,10 @@ impl ConfigfsVkms {
         std::thread::sleep(std::time::Duration::from_millis(50));
         self.set(&connector.join("status"), Payload::ConnectorConnected)?;
 
-        Ok(FeatureAcceptance { edid_applied })
+        Ok(FeatureAcceptance {
+            edid_applied,
+            hdr_applied,
+        })
     }
 
     fn mkdir(&self, path: &Path, ops: &mut Vec<Op>) -> Result<()> {
@@ -363,13 +392,12 @@ impl DisplayBackend for ConfigfsVkms {
 
         // Caller's spec.instance_index is a placeholder; we re-derive from
         // the slot we just picked.
-        let edid_bytes = edid::build(&EdidSpec {
+        let actual_spec = EdidSpec {
             instance_index,
             ..spec.clone()
-        })?;
-        log::debug!("generated {} bytes of EDID", edid_bytes.len());
+        };
 
-        let feature_acceptance = self.build(&name, &edid_bytes).inspect_err(|_| {
+        let feature_acceptance = self.build(&name, &actual_spec).inspect_err(|_| {
             let _ = self.remove(&name);
         })?;
 
