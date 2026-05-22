@@ -91,6 +91,8 @@ impl UpRequest {
 pub struct UpOutcome {
     pub handle: DisplayHandle,
     pub edid_applied: bool,
+    /// True iff `--hdr` was set AND the backend wired up the kernel correctly
+    pub hdr_properties_attached: bool,
     pub compositor_configured: bool,
     pub compositor_position: Option<(i32, i32)>,
 }
@@ -150,6 +152,7 @@ impl<'a> Up<'a> {
         Ok(UpOutcome {
             handle: outcome.handle,
             edid_applied: outcome.feature_acceptance.edid_applied,
+            hdr_properties_attached: outcome.feature_acceptance.hdr_applied,
             compositor_configured,
             compositor_position,
         })
@@ -360,7 +363,7 @@ impl Down {
         // remaining ones at their original positions
         // which caused gaps that made mutter mad.
         if !state.instances.is_empty() {
-            down.restore_compositor(&state.instances);
+            restore_compositor(&mut down.compositor, &state.instances);
         }
 
         // Kernel-side destroys can happen in any order now that the
@@ -375,81 +378,98 @@ impl Down {
         down.store.clear()?;
         Ok(removed)
     }
+}
 
-    /// Build one combined plan that disables every fauxput head, re-enables
-    /// the union of real outputs that any instance had disabled, and sets
-    /// primary back to the original primary.
-    fn restore_compositor(&mut self, instances: &[InstanceRecord]) {
-        let Some(comp) = self.compositor.as_mut() else {
-            return;
-        };
+/// Build one combined plan that disables every fauxput head, re-enables
+/// the union of real outputs that any instance had disabled, and sets
+/// primary back to the original primary.
+fn restore_compositor(
+    compositor: &mut Option<Box<dyn CompositorAdapter>>,
+    instances: &[InstanceRecord],
+) {
+    let Some(comp) = compositor.as_mut() else {
+        return;
+    };
 
-        // Every fauxput head we ever brought up.
-        let to_disable: Vec<String> = instances
-            .iter()
-            .filter(|r| r.compositor_configured)
-            .map(|r| {
-                r.compositor_head_name
-                    .clone()
-                    .unwrap_or_else(|| r.handle.local_id.clone())
-            })
-            .collect();
+    // Every fauxput head we ever brought up.
+    let to_disable: Vec<String> = instances
+        .iter()
+        .filter(|r| r.compositor_configured)
+        .map(|r| {
+            r.compositor_head_name
+                .clone()
+                .unwrap_or_else(|| r.handle.local_id.clone())
+        })
+        .collect();
 
-        // Union of every real output that we disable across any instance.
-        // Need to dedupe if multiple instances disabled the same output.
-        let to_reenable: HashSet<String> = instances
-            .iter()
-            .flat_map(|r| r.layout_changes.disabled_outputs.iter().cloned())
-            .collect();
+    // Union of every real output that we disable across any instance.
+    // Need to dedupe if multiple instances disabled the same output.
+    let to_reenable: HashSet<String> = instances
+        .iter()
+        .flat_map(|r| r.layout_changes.disabled_outputs.iter().cloned())
+        .collect();
 
-        // The OLDEST instance's `previous_primary` represents what was
-        // primary before any action
-        let previous_primary = instances
-            .iter()
-            .find_map(|r| r.layout_changes.previous_primary.clone());
+    // The oldest instance's `previous_primary` represents what was
+    // primary before any action.
+    let previous_primary = instances
+        .iter()
+        .find_map(|r| r.layout_changes.previous_primary.clone());
 
-        // Prefer current geometry over stored snapshots
-        let live = comp.snapshot().ok();
-        let enables: Vec<EnableOutput> = to_reenable
-            .into_iter()
-            .map(|name| {
-                let live_head = live
-                    .as_ref()
-                    .and_then(|s| s.heads.iter().find(|h| h.name == name));
-                EnableOutput {
-                    name,
-                    mode: live_head.and_then(|h| h.mode),
-                    position: live_head.and_then(|h| h.position),
-                }
-            })
-            .collect();
+    // Take snapshot and restore back-to-back.
+    let original_snapshot: Option<&OutputSnapshot> = instances
+        .iter()
+        .find_map(|r| r.compositor_snapshot.as_ref());
+    let live = comp.snapshot().ok();
+    let enables: Vec<EnableOutput> = to_reenable
+        .into_iter()
+        .map(|name| {
+            let snap_head = original_snapshot.and_then(|s| s.heads.iter().find(|h| h.name == name));
+            let live_head = live
+                .as_ref()
+                .and_then(|s| s.heads.iter().find(|h| h.name == name));
+            EnableOutput {
+                name,
+                mode: snap_head
+                    .and_then(|h| h.mode)
+                    .or_else(|| live_head.and_then(|h| h.mode)),
+                position: snap_head
+                    .and_then(|h| h.position)
+                    .or_else(|| live_head.and_then(|h| h.position)),
+            }
+        })
+        .collect();
 
-        // Inline closure so `?` lands in this local Result
-        // We want to warn and keep going, not abort the whole down run
-        // Seems a bit hacky, but it works.
+    // Two-phase apply.
+    if !enables.is_empty() || previous_primary.is_some() {
         let plan: Result<OutputPlan> = (|| {
-            let mut builder = OutputPlan::builder()
-                .enable_all(enables)?
-                .disable_all(to_disable.iter().cloned())?;
+            let mut builder = OutputPlan::builder().enable_all(enables)?;
             if let Some(name) = previous_primary {
                 builder = builder.set_primary(name)?;
             }
             Ok(builder.build())
         })();
-
-        // Plan or apply failure here doesn't block the kernel-side destroy
-        // warn so the user sees what happened and move on
-        let plan = match plan {
-            Ok(plan) => plan,
-            Err(e) => {
-                log::warn!("down: invalid restore plan: {e:#}");
-                return;
+        match plan {
+            Ok(plan) => {
+                if let Err(e) = comp.apply(&plan) {
+                    log::warn!("cleanup: phase 1 (re-enable real outputs) failed: {e:#}");
+                }
             }
-        };
-
-        if let Err(e) = comp.apply(&plan) {
-            log::warn!("down: compositor restore failed: {e:#}");
+            Err(e) => log::warn!("cleanup: invalid phase 1 plan: {e:#}"),
         }
+    }
+
+    let plan: Result<OutputPlan> = (|| {
+        Ok(OutputPlan::builder()
+            .disable_all(to_disable.iter().cloned())?
+            .build())
+    })();
+    match plan {
+        Ok(plan) => {
+            if let Err(e) = comp.apply(&plan) {
+                log::warn!("cleanup: phase 2 (disable fauxput heads) failed: {e:#}");
+            }
+        }
+        Err(e) => log::warn!("cleanup: invalid phase 2 plan: {e:#}"),
     }
 }
 
@@ -458,6 +478,7 @@ impl Down {
 struct Reset {
     backend: Box<dyn DisplayBackend>,
     store: StateStore,
+    compositor: Option<Box<dyn CompositorAdapter>>,
 }
 
 impl Reset {
@@ -465,13 +486,18 @@ impl Reset {
         let reset = Self {
             backend: pick_backend(),
             store: StateStore::new(),
+            compositor: connect_compositor(),
         };
+        let mut reset = reset;
 
         let mut removed: usize = 0;
 
         // Default-on-load lets reset proceed even when the state file is
         // missing or unreadable
         let state = reset.store.load().unwrap_or_default();
+        if !state.instances.is_empty() {
+            restore_compositor(&mut reset.compositor, &state.instances);
+        }
         for rec in state.instances.iter().rev() {
             if reset.backend.destroy(&rec.handle).is_ok() {
                 removed += 1;
