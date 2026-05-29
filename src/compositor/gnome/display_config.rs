@@ -79,8 +79,6 @@ pub(crate) struct LogicalMonitorConfig {
     pub(crate) transform: u32,
     pub(crate) primary: bool,
     pub(crate) monitors: Vec<MonitorConfig>,
-    /// Per-logical-monitor properties dict
-    pub(crate) properties: ApplyPropertyMap,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -148,7 +146,7 @@ mod tests {
     fn logical_monitor_config_signature_matches_xml() {
         assert_eq!(
             LogicalMonitorConfig::SIGNATURE.to_string(),
-            "(iiduba(ssa{sv})a{sv})"
+            "(iiduba(ssa{sv}))"
         );
     }
 

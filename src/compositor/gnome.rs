@@ -86,6 +86,9 @@ impl OutputPlan {
             }
 
             // Translate LogicalMonitor (read side) > LogicalMonitorConfig (write side).
+            // Carry forward the existing color-mode for untouched logical
+            // monitors so that re-applying a plan doesn't silently revert
+            // HDR-enabled monitors to SDR.
             let monitors: Vec<MonitorConfig> = lm
                 .monitors
                 .iter()
@@ -95,10 +98,16 @@ impl OutputPlan {
                         .iter()
                         .find(|m| m.id.connector == id.connector)?;
                     let current = monitor.modes.iter().find(|m| m.is_current())?;
+                    let mut properties: ApplyPropertyMap = HashMap::new();
+                    if let Some(cm) = lm.properties.get("color-mode")
+                        && let Ok(cm) = cm.try_clone()
+                    {
+                        properties.insert("color-mode".to_string(), cm);
+                    }
                     Some(MonitorConfig {
                         connector: id.connector.clone(),
                         id: current.id.clone(),
-                        properties: HashMap::new(),
+                        properties,
                     })
                 })
                 .collect();
@@ -109,15 +118,6 @@ impl OutputPlan {
                 continue;
             }
 
-            // Carry forward the existing color-mode for untouched
-            // logical monitors so that re-applying a plan doesn't
-            // silently revert HDR-enabled monitors to SDR.
-            let mut properties: ApplyPropertyMap = HashMap::new();
-            if let Some(cm) = lm.properties.get("color-mode")
-                && let Ok(cm) = cm.try_clone()
-            {
-                properties.insert("color-mode".to_string(), cm);
-            }
             result.push(LogicalMonitorConfig {
                 x: lm.x,
                 y: lm.y,
@@ -126,7 +126,6 @@ impl OutputPlan {
                 // Plan-declared primary clears every other primary marker.
                 primary: if plan_sets_primary { false } else { lm.primary },
                 monitors,
-                properties,
             });
         }
 
@@ -211,11 +210,11 @@ impl OutputPlan {
             };
 
             // 0 = SDR default, 1 = bt2100 HDR.
-            // Absent key = leave whatever the monitor had
-            let mut properties: ApplyPropertyMap = HashMap::new();
+            // Absent key = leave whatever the monitor had.
+            let mut monitor_properties: ApplyPropertyMap = HashMap::new();
             if let Some(want_hdr) = enable.hdr {
                 let color_mode: u32 = if want_hdr { 1 } else { 0 };
-                properties.insert(
+                monitor_properties.insert(
                     "color-mode".to_string(),
                     zbus::zvariant::Value::U32(color_mode)
                         .try_to_owned()
@@ -232,9 +231,8 @@ impl OutputPlan {
                 monitors: vec![MonitorConfig {
                     connector: enable.name.clone(),
                     id: mode.id.clone(),
-                    properties: HashMap::new(),
+                    properties: monitor_properties,
                 }],
-                properties,
             });
         }
 
