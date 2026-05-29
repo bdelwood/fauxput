@@ -209,12 +209,19 @@ impl ConfigfsVkms {
         // KWin rebuilds its output list on the bare add uevent,
         // so the toggle is just here to work around GNOME work.
         //
+        // TODO: In Plasma >=6.7 this now breaks kwin due to an additional gpu check added in fc0f321f15 that surfaced a race condition in KWin's GPU hot-add cleanup. Remove once KDE is fixed.
+        //
         // TODO: upstream a hotplug call into vkms's enabled=1 configfs
-        // handler, which would let us drop this whole dance. See
-        // VKMS_HPD_PATCH.md.
-        self.set(&connector.join("status"), Payload::ConnectorDisconnected)?;
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        self.set(&connector.join("status"), Payload::ConnectorConnected)?;
+        // handler, which would let us drop this whole dance.
+        let on_kde = std::env::var("XDG_CURRENT_DESKTOP")
+            .unwrap_or_default()
+            .split(':')
+            .any(|p| p.eq_ignore_ascii_case("KDE"));
+        if !on_kde {
+            self.set(&connector.join("status"), Payload::ConnectorDisconnected)?;
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            self.set(&connector.join("status"), Payload::ConnectorConnected)?;
+        }
 
         Ok(FeatureAcceptance { edid_applied })
     }
