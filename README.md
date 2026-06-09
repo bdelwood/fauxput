@@ -102,7 +102,7 @@ Sunshine $\geq$ 2026.4 portal capture works on any of the above once the adapter
 ## Documentation
 
 - [Streaming setup walkthrough](docs/src/streaming-setup.md) — wire fauxput into Sunshine + Moonlight
-- [Troubleshooting + working Sunshine recipe](docs/src/troubleshooting.md.md)
+- [Troubleshooting + working Sunshine recipe](docs/src/troubleshooting.md)
 - [Kernel-side dependency](docs/src/kernel-dependency.md) — the `vkms-edid-dkms` patch series
 
 
