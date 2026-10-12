@@ -335,6 +335,16 @@ enum ApplyResult {
 }
 
 impl State {
+    fn remove_device(&mut self, device_id: u32) {
+        if let Some(device) = self.devices.shift_remove(&device_id)
+            && let Some(proxy) = device.proxy
+            && proxy.version() >= 21
+        {
+            proxy.release();
+        }
+        self.modes.retain(|_, (parent, _)| *parent != device_id);
+    }
+
     /// Projects every device that has finished its initial event burst into
     /// a public state of the head.
     fn live_heads(&self) -> Vec<HeadState> {
@@ -493,10 +503,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     .find(|(_, device)| device.registry_name == Some(name))
                     .map(|(id, _)| *id)
                 {
-                    // drop the device record
-                    state.devices.shift_remove(&device_id);
-                    // drop any modes that hung off it
-                    state.modes.retain(|_, (parent, _)| *parent != device_id);
+                    state.remove_device(device_id);
                 }
             }
             _ => {}
@@ -564,7 +571,13 @@ impl Dispatch<KdeOutputDeviceV2, ()> for State {
         use kde_output_device_v2::Event::*;
 
         let device_id = device.id().protocol_id();
-        let entry = state.devices.entry(device_id).or_default();
+        if matches!(event, Removed) {
+            state.remove_device(device_id);
+            return;
+        }
+        let Some(entry) = state.devices.get_mut(&device_id) else {
+            return;
+        };
         match event {
             Name { name } => entry.name = Some(name),
             Enabled { enabled } => entry.enabled = enabled != 0,
@@ -636,11 +649,9 @@ impl Dispatch<KdeOutputDeviceModeV2, ()> for State {
             }
             return;
         }
-        let entry = &mut state
-            .modes
-            .entry(mode_id)
-            .or_insert_with(|| (0, ModeData::default()))
-            .1;
+        let Some((_, entry)) = state.modes.get_mut(&mode_id) else {
+            return;
+        };
 
         match event {
             Size { width, height } => {
