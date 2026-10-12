@@ -64,7 +64,10 @@ pub trait DisplayBackend: Send + Sync {
     /// by slot (configfs-vkms) re-derive the real value internally.
     fn create(&self, spec: &EdidSpec) -> Result<CreateOutcome>;
 
-    /// Tear down the display identified by `handle`. Safe to call when
+    /// Signal hot-unplug without destroying the device; return its connector names.
+    fn disconnect(&self, handle: &DisplayHandle) -> Result<Vec<String>>;
+
+    /// Tear down the display identified by `handle`.
     fn destroy(&self, handle: &DisplayHandle) -> Result<()>;
 
     fn list(&self) -> Result<Vec<DisplayHandle>>;

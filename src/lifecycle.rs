@@ -2,7 +2,10 @@
 //! adapter, and the persistent state file together.
 
 use log;
-use std::{collections::HashSet, time::Duration};
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
 use crate::{
     Result,
@@ -397,6 +400,15 @@ impl Down {
         // which caused gaps that made mutter mad.
         if !state.instances.is_empty() {
             restore_compositor(&mut down.compositor, &state.instances);
+            disconnect_outputs(
+                down.backend.as_ref(),
+                &mut down.compositor,
+                &state
+                    .instances
+                    .iter()
+                    .map(|rec| rec.handle.clone())
+                    .collect::<Vec<_>>(),
+            )?;
         }
 
         // Kernel-side destroys can happen in any order now that the
@@ -411,6 +423,47 @@ impl Down {
         down.store.clear()?;
         Ok(removed)
     }
+}
+
+/// Keep devices alive until the compositor has consumed their hot-unplug events.
+// TODO: Revisit GPU destruction when Mutter supports GPU removal:
+// https://gitlab.gnome.org/GNOME/mutter/-/issues/710
+// Mutter currently keeps the GPU object after its connectors disappear.
+fn disconnect_outputs(
+    backend: &dyn DisplayBackend,
+    compositor: &mut Option<Box<dyn CompositorAdapter>>,
+    handles: &[DisplayHandle],
+) -> Result<()> {
+    let mut names = HashSet::new();
+    for handle in handles {
+        names.extend(backend.disconnect(handle)?);
+    }
+    let Some(comp) = compositor.as_mut() else {
+        return Ok(());
+    };
+    // Mutter debounces disconnection for three seconds; don't substitute a fixed sleep.
+    let timeout = Duration::from_secs(8);
+    let deadline = Instant::now() + timeout;
+    while !names.is_empty() {
+        let snapshot = comp.snapshot()?;
+        if !snapshot
+            .heads
+            .iter()
+            .any(|head| names.contains(head.name.as_str()))
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(crate::compositor::CompositorError::Timeout {
+                reason: "compositor to acknowledge display disconnection; devices kept for retry"
+                    .into(),
+                timeout,
+            }
+            .into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok(())
 }
 
 /// Build one combined plan that disables every fauxput head, re-enables
@@ -532,6 +585,9 @@ impl Reset {
         if !state.instances.is_empty() {
             restore_compositor(&mut reset.compositor, &state.instances);
         }
+        // Include orphaned devices even when the state file could not be read.
+        let handles = reset.backend.list()?;
+        disconnect_outputs(reset.backend.as_ref(), &mut reset.compositor, &handles)?;
         for rec in state.instances.iter().rev() {
             if reset.backend.destroy(&rec.handle).is_ok() {
                 removed += 1;

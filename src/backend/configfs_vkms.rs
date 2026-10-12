@@ -319,7 +319,14 @@ impl ConfigfsVkms {
 
         // Step 1: graceful disconnect on every connector.
         inst.join("connectors").entries().for_each(|entry| {
-            let _ = self.set(&entry.path().join("status"), Payload::ConnectorDisconnected);
+            let status = entry.path().join("status");
+            // VKMS sends a hotplug event even when the status is unchanged.
+            if fs::read(&status).is_ok_and(|value| {
+                value.trim_ascii() == Payload::ConnectorDisconnected.as_bytes().trim_ascii()
+            }) {
+                return;
+            }
+            let _ = self.set(&status, Payload::ConnectorDisconnected);
         });
 
         // Step 2: let compositor process the hot-unplug.
@@ -430,6 +437,34 @@ impl DisplayBackend for ConfigfsVkms {
     fn destroy(&self, handle: &DisplayHandle) -> Result<()> {
         log::info!("destroying {}", handle.local_id);
         self.remove(&handle.local_id)
+    }
+
+    fn disconnect(&self, handle: &DisplayHandle) -> Result<Vec<String>> {
+        let mut names = Vec::new();
+        let drm = Path::new("/sys/devices/faux")
+            .join(&handle.local_id)
+            .join("drm");
+        for card in drm.entries() {
+            let prefix = format!("{}-", card.file_name().to_string_lossy());
+            for connector in card.path().entries() {
+                if let Some(name) = connector
+                    .file_name()
+                    .to_string_lossy()
+                    .strip_prefix(&prefix)
+                {
+                    names.push(name.to_string());
+                }
+            }
+        }
+        for entry in self
+            .root
+            .join(&handle.local_id)
+            .join("connectors")
+            .entries()
+        {
+            self.set(&entry.path().join("status"), Payload::ConnectorDisconnected)?;
+        }
+        Ok(names)
     }
 
     // list all instances by walking tree
