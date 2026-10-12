@@ -210,7 +210,18 @@ impl ConfigfsVkms {
             false
         };
 
-        self.set(&connector.join("status"), Payload::ConnectorConnected)?;
+        let on_kde = std::env::var("XDG_CURRENT_DESKTOP")
+            .unwrap_or_default()
+            .split(':')
+            .any(|p| p.eq_ignore_ascii_case("KDE"));
+        self.set(
+            &connector.join("status"),
+            if on_kde {
+                Payload::ConnectorConnected
+            } else {
+                Payload::ConnectorDisconnected
+            },
+        )?;
 
         // Symlinks expressing the topology.
         self.symlink(&crtc, &plane.join("possible_crtcs/0"), ops)?;
@@ -222,29 +233,20 @@ impl ConfigfsVkms {
         // symlink, etc.).
         self.set(&inst.join("enabled"), Payload::Enabled)?;
 
-        // Toggle status to fire HPD. vkms ignores writes that don't
-        // actually change anything, so we disconnect first to make the
-        // reconnect count.
-        //
-        // The 50ms wait gives Mutter time to notice the new card before
-        // its hotplug handler runs. Skip the wait and Mutter ends up
-        // walking a device list that doesn't include us yet, silently
-        // losing the connector.
+        // Connect after registering the GPU to fire HPD. Starting disconnected
+        // avoids a transient unplug while Mutter is still adding the GPU.
         //
         // KDE doesn't depend on any of this
-        // KWin rebuilds its output list on the bare add uevent,
-        // so the toggle is just here to work around GNOME work.
+        // KWin rebuilds its output list on the bare add uevent.
         //
-        // TODO: In Plasma >=6.7 this now breaks kwin due to an additional gpu check added in fc0f321f15 that surfaced a race condition in KWin's GPU hot-add cleanup. Remove once KDE is fixed.
+        // TODO: This workaround is not needed with KWin 6.7 and 6.8.
+        // Test earlier supported versions or drop support for them before removing it.
+        // KWin 6.8's GPU hot-add cleanup fix:
+        // https://invent.kde.org/plasma/kwin/-/commit/f8f5bec7b0adcf37bf069b61cd8d992ac830b2bd
         //
-        // TODO: upstream a hotplug call into vkms's enabled=1 configfs
-        // handler, which would let us drop this whole dance.
-        let on_kde = std::env::var("XDG_CURRENT_DESKTOP")
-            .unwrap_or_default()
-            .split(':')
-            .any(|p| p.eq_ignore_ascii_case("KDE"));
+        // TODO: Retest without the delayed connect when Mutter configures outputs
+        // on GPU addition: https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/5340
         if !on_kde {
-            self.set(&connector.join("status"), Payload::ConnectorDisconnected)?;
             std::thread::sleep(std::time::Duration::from_millis(50));
             self.set(&connector.join("status"), Payload::ConnectorConnected)?;
         }
