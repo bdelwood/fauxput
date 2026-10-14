@@ -97,8 +97,7 @@ pub fn cvt_rb_v1(width: u32, height: u32, refresh_hz: u32) -> Result<Timing> {
         .map_err(|_| invalid(&format!("pixel clock {} kHz overflows u32", mode.dot_clock)))?;
     if pixel_clock_khz > 655_350 {
         return Err(invalid(&format!(
-            "pixel clock {pixel_clock_khz} kHz exceeds EDID 1.4 DTD limit of 655350 kHz \
-             (would need a CTA-861 extension block; deferred till later)"
+            "pixel clock {pixel_clock_khz} kHz exceeds EDID 1.4 DTD limit of 655350 kHz"
         )));
     }
 
@@ -180,7 +179,6 @@ mod tests {
 
     /// Silly inputs and over-DTD pixel clocks must error, not panic.
     /// 4K @ 120 Hz needs ~1.1 GHz, beyond DTD's 655350 cap.
-    /// TODO: update when CTA extension lands.
     #[test]
     fn rejects_invalid_inputs() {
         assert!(cvt_rb_v1(0, 0, 60).is_err());
