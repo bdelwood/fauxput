@@ -2,6 +2,8 @@
 
 Incus-managed Fedora test VMs for fauxput.
 
+Only use disposable hosts for these tests. They change display configuration and can disrupt the desktop session.
+
 ## Prerequisites
 
 - `incus`, `just`
@@ -15,12 +17,12 @@ Incus-managed Fedora test VMs for fauxput.
 ## Commands
 
 ```sh
-just vm-up <flavor>            # init + provision + snapshot
-just vm-shell <flavor>         # ssh as test user
-just vm-reset <flavor>         # restore to `ready` snapshot
-just vm-install <flavor>       # push freshly-built fauxput binary
-just vm-vkms-rebuild <flavor>  # rebuild DKMS after $VKMS_SRC changes
-just vm-down <flavor>          # delete the VM
+just dev vm-up <flavor>            # init + provision + snapshot
+just dev vm-shell <flavor>         # shell as test user
+just dev vm-reset <flavor>         # restore to `ready` snapshot
+just dev vm-install <flavor>       # push freshly-built fauxput binary
+just dev vm-vkms-rebuild <flavor>   # rebuild DKMS after $VKMS_SRC changes
+just dev vm-down <flavor>          # delete the VM
 ```
 
 Flavor defaults to `gnome`.
@@ -29,10 +31,10 @@ Flavor defaults to `gnome`.
 
 Only run these tests on a disposable host. They change display configuration and deliberately corrupt fauxput's runtime state. Do not run them on your desktop or streaming host, or in parallel.
 
-Requires `bats`, `jq`, patched VKMS, and a GNOME Wayland session.
+Requires `just`, `bats`, `jq`, patched VKMS, and a GNOME Wayland session. Run from the fauxput checkout inside the VM.
 
 ```bash
-FAUXPUT_TEST_DISPOSABLE=1 bash /mnt/fauxput-src/dev/bats.sh
+FAUXPUT_TEST_DISPOSABLE=1 just dev test-gnome
 # Run one test:
-FAUXPUT_TEST_DISPOSABLE=1 bash /mnt/fauxput-src/dev/bats.sh --filter 'ten up/down'
+FAUXPUT_TEST_DISPOSABLE=1 just dev test-gnome --filter 'ten up/down'
 ```

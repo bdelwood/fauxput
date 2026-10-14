@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Run only in a disposable GNOME Wayland session; these tests change displays.
-# See dev/fedora-gnome/README.md for prerequisites and invocation.
+# See dev/README.md for prerequisites and invocation.
 
 set -o pipefail
 
@@ -72,7 +72,12 @@ teardown() {
     [ "$(pgrep -u "$(id -u)" -x gnome-shell)" = "$GNOME_SHELL_PID_BEFORE" ] || return 1
     [ "$(vkms_instances)" -eq 0 ] || return 1
     fauxput status --json | jq -e '.instances | length == 0' >/dev/null || return 1
-    [ "$(mutter_layout)" = "$TORTURE_LAYOUT_BEFORE" ] || return 1
+    local layout_after
+    layout_after=$(mutter_layout) || return 1
+    if [ "$layout_after" != "$TORTURE_LAYOUT_BEFORE" ]; then
+        printf 'Layout before: %s\nLayout after: %s\n' "$TORTURE_LAYOUT_BEFORE" "$layout_after" >&2
+        return 1
+    fi
     [ "$cleanup_failed" -eq 0 ]
 }
 

@@ -8,6 +8,11 @@ VKMS_SRC := env_var_or_default("VKMS_SRC", "")
 default:
     @just --list --justfile {{ HERE }}/justfile
 
+# Run inside a disposable GNOME Wayland session.
+[positional-arguments]
+test-gnome *args:
+    bats "$@" "{{ HERE }}/test_gnome_torture.bats"
+
 # Bring up a Fedora VM with vkms-edid-dkms loaded.
 vm-up flavor="gnome":
     incus init images:fedora/44/cloud fauxput-test-{{ flavor }} --vm \

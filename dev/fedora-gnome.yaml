@@ -21,6 +21,7 @@ packages:
   - epiphany
   - bats
   - jq
+  - just
   # Sunshine runtime deps
   - ffmpeg-free
   - libdrm
