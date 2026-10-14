@@ -22,7 +22,7 @@ use crate::compositor::kde::KdeCompositor;
 use crate::compositor::gnome::GnomeCompositor;
 
 /// How long to wait for the kernel hot-plug to surface as a Wayland head.
-const HEAD_APPEAR_TIMEOUT: Duration = Duration::from_secs(1);
+const HEAD_APPEAR_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Try each adapter in order and return the first one that connects.
 fn connect_compositor() -> Option<Box<dyn CompositorAdapter>> {
@@ -43,16 +43,6 @@ fn connect_compositor() -> Option<Box<dyn CompositorAdapter>> {
         }
     }
     None
-}
-
-/// True if `name` looks like a hardware connector we should treat as "real"
-/// Used to decide which heads `--disable-real-outputs`
-/// should turn off.
-fn is_real_output(name: &str) -> bool {
-    matches!(
-        name.split('-').next().unwrap_or(""),
-        "DP" | "HDMI" | "eDP" | "DVI" | "VGA" | "DSI" | "LVDS"
-    )
 }
 
 /// Caller-supplied parameters for `up`. The lifecycle layer translates
@@ -85,6 +75,8 @@ impl UpRequest {
             name: name.to_string(),
             mode: Some(self.mode()),
             position: Some(position),
+            scale: None,
+            transform: None,
             hdr: Some(self.spec.hdr),
         }
     }
@@ -201,7 +193,24 @@ impl<'a> Up<'a> {
     }
 
     pub fn attach_compositor(&mut self, handle: &DisplayHandle) -> Result<(i32, i32)> {
-        let (compositor_name, initial_pos) = self.place_new_head()?;
+        let (compositor_name, initial_pos) = self.place_new_head(handle)?;
+
+        // Connector names are compositor-specific; use our records to distinguish
+        // fauxput heads from other displays (including a VM's Virtual-1).
+        let owned: HashSet<String> = self
+            .store
+            .load()?
+            .instances
+            .into_iter()
+            .filter_map(|rec| rec.compositor_head_name)
+            .collect();
+        let real_outputs: Vec<String> = self
+            .pre_create
+            .heads
+            .iter()
+            .filter(|h| h.enabled && !owned.contains(&h.name))
+            .map(|h| h.name.clone())
+            .collect();
 
         // Place at the origin: otherwise the cursor gets pinned off-screen,
         // at the coordinates the disabled real outputs used to occupy.
@@ -209,7 +218,14 @@ impl<'a> Up<'a> {
         // clicks still land where the visible cursor is
         // but for full screen apps like games which use `zwp_locked_pointer_v1`, they refuse to engage when the
         // cursor sits outside the requesting surface.
-        let pos = if self.req.disable_real_outputs {
+        let pos = if self.req.disable_real_outputs
+            && self
+                .pre_create
+                .heads
+                .iter()
+                .filter(|h| h.enabled)
+                .all(|h| real_outputs.contains(&h.name))
+        {
             (0, 0)
         } else {
             initial_pos
@@ -220,19 +236,9 @@ impl<'a> Up<'a> {
             handle.local_id
         );
 
-        // Swallow partial-apply failures: the head is up and recorded, and
-        // the user can manually fix or `down` to clean up. Bubbling the
-        // error here would suggest the whole `up` failed when it didn't.
-        let layout_changes = self
-            .apply_layout(&compositor_name, pos)
-            .unwrap_or_else(|e| {
-                log::warn!("layout partially applied: {e:#}");
-                LayoutChanges::default()
-            });
-
-        self.attached_head_name = Some(compositor_name.clone());
+        // Keep the created head tracked, but don't report a rejected layout as configured.
+        let layout_changes = self.apply_layout(&compositor_name, pos, real_outputs)?;
         self.store.update_instance(&handle.local_id, |rec| {
-            rec.compositor_head_name = Some(compositor_name);
             rec.compositor_configured = true;
             rec.layout_changes = layout_changes;
         })?;
@@ -259,7 +265,7 @@ impl<'a> Up<'a> {
             .unwrap_or(false)
     }
 
-    pub fn place_new_head(&mut self) -> Result<(String, (i32, i32))> {
+    pub fn place_new_head(&mut self, handle: &DisplayHandle) -> Result<(String, (i32, i32))> {
         let comp = self.compositor.as_mut().expect("compositor must be Some");
 
         // Anything not in the pre-create snapshot must be the head we just
@@ -272,23 +278,14 @@ impl<'a> Up<'a> {
             .collect();
         let new_head = comp.wait_for_new_head(&baseline_names, HEAD_APPEAR_TIMEOUT)?;
         let head_name = new_head.name.clone();
+        self.attached_head_name = Some(head_name.clone());
+        self.store.update_instance(&handle.local_id, |rec| {
+            rec.compositor_head_name = Some(head_name.clone());
+        })?;
 
         // Append to the right of the existing layout so we never overlap
         // a real output and confuse the compositor's window placement.
-        let max_x = self
-            .pre_create
-            .heads
-            .iter()
-            .filter(|h| h.enabled)
-            // skip heads missing position or mode; we can't compute their
-            // right edge so they contribute nothing to the placement
-            .filter_map(|h| {
-                let (x, _) = h.position?;
-                let mode = h.mode?;
-                Some(x + mode.width)
-            })
-            .max()
-            .unwrap_or(0);
+        let max_x = self.pre_create.right_edge();
 
         // First apply just enables the head at its slot. The full layout
         // pass (disable real outputs, set primary) happens in apply_layout
@@ -306,26 +303,18 @@ impl<'a> Up<'a> {
         &mut self,
         new_head_name: &str,
         new_head_position: (i32, i32),
+        real_outputs: Vec<String>,
     ) -> Result<LayoutChanges> {
         // Best-effort guess at "the previous primary" so `down` can restore it.
         let previous_primary = if self.req.make_primary {
-            self.pre_create
-                .heads
-                .iter()
-                .find(|h| h.enabled && is_real_output(&h.name))
-                .map(|h| h.name.clone())
+            real_outputs.first().cloned()
         } else {
             None
         };
 
         // Names of every currently-on real output.
         let disabled_outputs: Vec<String> = if self.req.disable_real_outputs {
-            self.pre_create
-                .heads
-                .iter()
-                .filter(|h| h.enabled && is_real_output(&h.name))
-                .map(|h| h.name.clone())
-                .collect()
+            real_outputs
         } else {
             Vec::new()
         };
@@ -412,7 +401,7 @@ impl Down {
         }
 
         // Kernel-side destroys can happen in any order now that the
-        // compositor's view has been settled in a single apply.
+        // compositor's view has been restored.
         // just do newest first.
         for rec in state.instances.iter().rev() {
             if down.backend.destroy(&rec.handle).is_ok() {
@@ -480,12 +469,7 @@ fn restore_compositor(
     // Every fauxput head we ever brought up.
     let to_disable: Vec<String> = instances
         .iter()
-        .filter(|r| r.compositor_configured)
-        .map(|r| {
-            r.compositor_head_name
-                .clone()
-                .unwrap_or_else(|| r.handle.local_id.clone())
-        })
+        .filter_map(|r| r.compositor_head_name.clone())
         .collect();
 
     // Union of every real output that we disable across any instance.
@@ -500,6 +484,10 @@ fn restore_compositor(
     let previous_primary = instances
         .iter()
         .find_map(|r| r.layout_changes.previous_primary.clone());
+
+    if to_disable.is_empty() && to_reenable.is_empty() && previous_primary.is_none() {
+        return;
+    }
 
     // Take snapshot and restore back-to-back.
     let original_snapshot: Option<&OutputSnapshot> = instances
@@ -522,41 +510,33 @@ fn restore_compositor(
                     .and_then(|h| h.position)
                     .or_else(|| live_head.and_then(|h| h.position)),
                 hdr: snap_head.and_then(|h| h.hdr_enabled),
+                scale: snap_head
+                    .and_then(|h| h.scale)
+                    .or_else(|| live_head.and_then(|h| h.scale)),
+                transform: snap_head
+                    .and_then(|h| h.transform)
+                    .or_else(|| live_head.and_then(|h| h.transform)),
             }
         })
         .collect();
 
-    // Two-phase apply.
-    if !enables.is_empty() || previous_primary.is_some() {
-        let plan: Result<OutputPlan> = (|| {
-            let mut builder = OutputPlan::builder().enable_all(enables)?;
-            if let Some(name) = previous_primary {
-                builder = builder.set_primary(name)?;
-            }
-            Ok(builder.build())
-        })();
-        match plan {
-            Ok(plan) => {
-                if let Err(e) = comp.apply(&plan) {
-                    log::warn!("cleanup: phase 1 (re-enable real outputs) failed: {e:#}");
-                }
-            }
-            Err(e) => log::warn!("cleanup: invalid phase 1 plan: {e:#}"),
-        }
-    }
-
+    // The adapter handles the transition back to the saved layout.
     let plan: Result<OutputPlan> = (|| {
-        Ok(OutputPlan::builder()
-            .disable_all(to_disable.iter().cloned())?
-            .build())
+        let mut builder = OutputPlan::builder()
+            .enable_all(enables)?
+            .disable_all(to_disable)?;
+        if let Some(name) = previous_primary {
+            builder = builder.set_primary(name)?;
+        }
+        Ok(builder.build())
     })();
     match plan {
         Ok(plan) => {
-            if let Err(e) = comp.apply(&plan) {
-                log::warn!("cleanup: phase 2 (disable fauxput heads) failed: {e:#}");
+            if let Err(e) = comp.restore(&plan) {
+                log::warn!("cleanup: restore output layout failed: {e:#}");
             }
         }
-        Err(e) => log::warn!("cleanup: invalid phase 2 plan: {e:#}"),
+        Err(e) => log::warn!("cleanup: invalid restore plan: {e:#}"),
     }
 }
 

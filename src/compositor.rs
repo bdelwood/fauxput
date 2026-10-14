@@ -73,9 +73,35 @@ pub enum CompositorError {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct OutputSnapshot {
     pub heads: Vec<HeadState>,
+    /// Mutter can use physical pixels instead of scaled layout coordinates.
+    #[serde(default)]
+    pub physical_layout: bool,
 }
 
 impl OutputSnapshot {
+    pub(crate) fn right_edge(&self) -> i32 {
+        self.heads
+            .iter()
+            .filter(|h| h.enabled)
+            .filter_map(|h| {
+                let (x, _) = h.position?;
+                let mode = h.mode?;
+                let width = if h.transform.is_some_and(|t| t.swaps_axes()) {
+                    mode.height
+                } else {
+                    mode.width
+                };
+                let scale = if self.physical_layout {
+                    1.0
+                } else {
+                    h.scale.unwrap_or(1.0)
+                };
+                Some(x + (f64::from(width) / scale).round() as i32)
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Project enabled heads into [`EnableOutput`] requests carrying their
     /// current mode + position. Heads without both fields are skipped.
     pub fn active_enables(&self) -> Vec<EnableOutput> {
@@ -89,6 +115,8 @@ impl OutputSnapshot {
                     name: h.name.clone(),
                     mode: Some(mode),
                     position: Some(position),
+                    scale: h.scale,
+                    transform: h.transform,
                     hdr: h.hdr_enabled,
                 })
             })
@@ -150,6 +178,15 @@ pub enum Transform {
     FlippedRot90,
     FlippedRot180,
     FlippedRot270,
+}
+
+impl Transform {
+    pub(crate) fn swaps_axes(self) -> bool {
+        matches!(
+            self,
+            Self::Rot90 | Self::Rot270 | Self::FlippedRot90 | Self::FlippedRot270
+        )
+    }
 }
 
 impl TryFrom<i32> for Transform {
@@ -241,7 +278,7 @@ impl OutputPlan {
 /// Example:
 /// ```ignore
 /// let plan = OutputPlan::builder()
-///     .enable(EnableOutput { name: "DP-1".into(), mode: None, position: None })?
+///     .enable(EnableOutput { name: "DP-1".into(), ..Default::default() })?
 ///     .disable("DP-2")?
 ///     .set_primary("DP-1")?
 ///     .build();
@@ -379,11 +416,13 @@ pub enum PlanError {
 
 /// Request to bring a head up at a specific mode and position. If mode or position are
 /// absent the compositor picks defaults.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct EnableOutput {
     pub name: String,
     pub mode: Option<ModeInfo>,
     pub position: Option<(i32, i32)>,
+    pub scale: Option<f64>,
+    pub transform: Option<Transform>,
     pub hdr: Option<bool>,
 }
 
@@ -414,6 +453,11 @@ pub trait CompositorAdapter: Send {
 
     /// Apply a plan atomically.
     fn apply(&mut self, plan: &OutputPlan) -> Result<()>;
+
+    /// Restore the saved layout during teardown.
+    fn restore(&mut self, plan: &OutputPlan) -> Result<()> {
+        self.apply(plan)
+    }
 }
 
 #[cfg(test)]
@@ -450,18 +494,23 @@ mod tests {
             mode: None,
             position: None,
             hdr: None,
+            ..Default::default()
         }
     }
 
     /// OutputSnapshot must serde round-trip; empty snapshot serializes to a stable string
     #[test]
     fn snapshot_serde_round_trip() {
+        let previous: OutputSnapshot = serde_json::from_str(r#"{"heads":[]}"#).unwrap();
+        assert!(!previous.physical_layout);
+
         assert_eq!(
             serde_json::to_string(&OutputSnapshot::default()).unwrap(),
-            r#"{"heads":[]}"#
+            r#"{"heads":[],"physical_layout":false}"#
         );
 
         let s = OutputSnapshot {
+            physical_layout: false,
             heads: vec![
                 HeadState {
                     name: "DP-1".into(),
@@ -559,6 +608,7 @@ mod tests {
             mode: None,
             position: None,
             hdr: None,
+            ..Default::default()
         });
         assert!(matches!(r, Err(Error::Plan(PlanError::EmptyName))));
 
@@ -593,6 +643,7 @@ mod tests {
             }),
             position: None,
             hdr: None,
+            ..Default::default()
         });
         assert!(matches!(
             r,

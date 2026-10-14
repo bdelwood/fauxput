@@ -57,7 +57,16 @@ impl From<CurrentState> for OutputSnapshot {
             })
             .collect();
 
-        OutputSnapshot { heads }
+        // get layout state too
+        let physical_layout = state
+            .properties
+            .get("layout-mode")
+            .and_then(|v| u32::try_from(v).ok())
+            == Some(2);
+        OutputSnapshot {
+            heads,
+            physical_layout,
+        }
     }
 }
 
@@ -224,9 +233,15 @@ impl OutputPlan {
             result.push(LogicalMonitorConfig {
                 x,
                 y,
-                // don't touch scaling or transform... for now.
-                scale: 1.0,
-                transform: 0,
+                scale: enable
+                    .scale
+                    .or_else(|| existing.map(|lm| lm.scale))
+                    .unwrap_or(mode.preferred_scale),
+                transform: enable
+                    .transform
+                    .map(|t| t as u32)
+                    .or_else(|| existing.map(|lm| lm.transform))
+                    .unwrap_or(0),
                 primary,
                 monitors: vec![MonitorConfig {
                     connector: enable.name.clone(),
@@ -270,7 +285,18 @@ fn right_edge(placed: &[LogicalMonitorConfig], state: &CurrentState) -> i32 {
                 .iter()
                 .find(|s| s.id.connector == m.connector)?;
             let mode = monitor.modes.iter().find(|md| md.id == m.id)?;
-            Some(lmc.x + mode.width)
+            let width = if Transform::try_from(lmc.transform).is_ok_and(|t| t.swaps_axes()) {
+                mode.height
+            } else {
+                mode.width
+            };
+            let physical = state
+                .properties
+                .get("layout-mode")
+                .and_then(|v| u32::try_from(v).ok())
+                == Some(2);
+            let scale = if physical { 1.0 } else { lmc.scale };
+            Some(lmc.x + (f64::from(width) / scale).round() as i32)
         })
         .max()
         .unwrap_or(0)
@@ -430,8 +456,20 @@ impl CompositorAdapter for GnomeCompositor {
         let state = self.current_state()?;
         let logical = plan.to_mutter_config(&state);
 
+        let mut properties = HashMap::new();
+        if state
+            .properties
+            .get("supports-changing-layout-mode")
+            .and_then(|v| bool::try_from(v).ok())
+            == Some(true)
+            && let Some(layout_mode) = state.properties.get("layout-mode")
+            && let Ok(layout_mode) = layout_mode.try_clone()
+        {
+            properties.insert("layout-mode".into(), layout_mode);
+        }
+
         self.proxy()?
-            .apply_monitors_config(state.serial, Method::Temporary, &logical, HashMap::new())
+            .apply_monitors_config(state.serial, Method::Temporary, &logical, properties)
             .map_err(|source| CompositorError::Dbus {
                 context: "gnome: apply monitors config",
                 source,

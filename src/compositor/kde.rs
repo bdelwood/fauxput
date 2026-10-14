@@ -141,6 +141,7 @@ impl CompositorAdapter for KdeCompositor {
         self.session.roundtrip("kde: snapshot refresh")?;
         Ok(OutputSnapshot {
             heads: self.session.state.live_heads(),
+            physical_layout: false,
         })
     }
 
@@ -231,6 +232,21 @@ impl CompositorAdapter for KdeCompositor {
                     touched += 1;
                 }
 
+                if target.enabled
+                    && let Some(scale) = target.scale
+                    && Some(scale) != head.scale
+                {
+                    cfg.scale(&proxy, scale);
+                    touched += 1;
+                }
+                if target.enabled
+                    && let Some(transform) = target.transform
+                    && Some(transform) != head.transform
+                {
+                    cfg.transform(&proxy, transform as i32);
+                    touched += 1;
+                }
+
                 // priority resets to 0 unless re-asserted on every apply
                 cfg.set_priority(&proxy, priorities[&head.name]);
                 touched += 1;
@@ -247,6 +263,16 @@ impl CompositorAdapter for KdeCompositor {
             Ok(touched)
         })
     }
+
+    fn restore(&mut self, plan: &OutputPlan) -> Result<()> {
+        // Bring back real outputs before removing Plasma's current screen.
+        if !plan.enables.is_empty() && !plan.disables.is_empty() {
+            let mut enable_plan = plan.clone();
+            enable_plan.disables.clear();
+            self.apply(&enable_plan)?;
+        }
+        self.apply(plan)
+    }
 }
 
 /// What a single head should look like after the plan is applied.
@@ -254,6 +280,8 @@ struct Target {
     enabled: bool,
     mode: Option<ModeInfo>,
     position: Option<(i32, i32)>,
+    scale: Option<f64>,
+    transform: Option<Transform>,
     hdr: Option<bool>,
 }
 
@@ -272,6 +300,10 @@ impl Target {
                 .and_then(|entry| entry.position)
                 .or(head.position),
             hdr: enable_entry.and_then(|entry| entry.hdr),
+            scale: enable_entry.and_then(|entry| entry.scale).or(head.scale),
+            transform: enable_entry
+                .and_then(|entry| entry.transform)
+                .or(head.transform),
         }
     }
 }
@@ -765,6 +797,7 @@ mod tests {
                 mode: Some(mode),
                 position: Some((100, 0)),
                 hdr: None,
+                ..Default::default()
             })
             .unwrap()
             .set_primary("DP-2")
