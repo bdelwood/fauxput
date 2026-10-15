@@ -1,6 +1,13 @@
 # Troubleshooting
 
-Gotchyas that will break fauxput in non-obvious ways. 
+Gotchyas that will break fauxput in non-obvious ways.
+
+## GNOME stops detecting new displays
+
+Mutter can keep removed VKMS devices in its GPU list ([GNOME/mutter#710](https://gitlab.gnome.org/GNOME/mutter/-/issues/710)). If its log says `Failed to hotplug secondary gpu` with `device already present`, log out and back in to clear that state. Repeated creation and removal can also crash the compositor.
+
+<!-- TODO: Remove this workaround once Mutter handles GPU removal and reuse: https://gitlab.gnome.org/GNOME/mutter/-/issues/710 -->
+Keep the fauxput display up between streaming connections to avoid repeated GPU hotplug. Create it once with `fauxput up`, omit the per-connection `up`/`down` commands, and run `fauxput down` when you're finished.
 
 ## SDDM with an X11 greeter results in logout on `fauxput down`
 
@@ -15,7 +22,7 @@ loginctl show-session $(loginctl list-sessions --no-legend | awk '/greeter/{prin
 # Type=wayland  > safe
 ```
 
-The fix is to use SDDM in Wayland mode, or PLM. 
+The fix is to use SDDM in Wayland mode, or PLM.
 
 ---
 
