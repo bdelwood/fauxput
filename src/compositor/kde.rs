@@ -211,7 +211,10 @@ impl CompositorAdapter for KdeCompositor {
             // alone" for most properties.
             for head in &live {
                 // skip heads we don't have a bound proxy for
-                let Some(proxy) = state.device_by_name(&head.name) else {
+                let Some(device) = state.device_by_name(&head.name) else {
+                    continue;
+                };
+                let Some(proxy) = device.proxy.clone() else {
                     continue;
                 };
                 let target = Target::for_head(head, &plan);
@@ -261,14 +264,16 @@ impl CompositorAdapter for KdeCompositor {
                 cfg.set_priority(&proxy, priorities[&head.name]);
                 touched += 1;
 
-                // kwin needs both HDR + wide-color-gamut set
-                if let Some(color_mode) = target.color_mode
-                    && head.color_mode != Some(color_mode)
-                {
-                    let want_hdr = color_mode == ColorMode::Hdr;
-                    cfg.set_high_dynamic_range(&proxy, want_hdr.into());
-                    cfg.set_wide_color_gamut(&proxy, want_hdr.into());
-                    touched += 2;
+                if let Some(color_mode) = target.color_mode {
+                    let (hdr, wcg) = device.color_changes(color_mode);
+                    if let Some(enabled) = hdr {
+                        cfg.set_high_dynamic_range(&proxy, enabled.into());
+                        touched += 1;
+                    }
+                    if let Some(enabled) = wcg {
+                        cfg.set_wide_color_gamut(&proxy, enabled.into());
+                        touched += 1;
+                    }
                 }
             }
             Ok(touched)
@@ -357,11 +362,20 @@ struct Device {
     position: Option<(i32, i32)>,
     scale: Option<f64>,
     transform: Option<Transform>,
-    // TODO: should we track these together?
     hdr_enabled: Option<bool>,
     wcg_enabled: Option<bool>,
     // to prevent races against initialization
     done_seen: bool,
+}
+
+impl Device {
+    fn color_changes(&self, color_mode: ColorMode) -> (Option<bool>, Option<bool>) {
+        let enabled = color_mode == ColorMode::Hdr;
+        (
+            (self.hdr_enabled != Some(enabled)).then_some(enabled),
+            (self.wcg_enabled != Some(enabled)).then_some(enabled),
+        )
+    }
 }
 
 type ModeData = OutputMode<KdeOutputDeviceModeV2>;
@@ -421,14 +435,12 @@ impl State {
         }
     }
 
-    /// Look up a device proxy by the connector name KWin advertised.
-    fn device_by_name(&self, name: &str) -> Option<KdeOutputDeviceV2> {
+    /// Look up a device by the connector name KWin advertised.
+    fn device_by_name(&self, name: &str) -> Option<&Device> {
         self.devices
             .values()
             // find the device whose name matches
             .find(|device| device.name.as_deref() == Some(name))
-            // hand back its bound proxy so the caller can issue requests on it
-            .and_then(|device| device.proxy.clone())
     }
 
     /// Find the mode proxy on a given device whose dimensions and refresh
