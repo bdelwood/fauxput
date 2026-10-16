@@ -117,7 +117,7 @@ impl OutputSnapshot {
                     position: Some(position),
                     scale: h.scale,
                     transform: h.transform,
-                    hdr: h.hdr_enabled,
+                    color_mode: h.color_mode,
                 })
             })
             .collect()
@@ -135,8 +135,23 @@ pub struct HeadState {
     pub position: Option<(i32, i32)>,
     pub scale: Option<f64>,
     pub transform: Option<Transform>,
-    #[serde(default)]
-    pub hdr_enabled: Option<bool>,
+    pub color_mode: Option<ColorMode>,
+}
+
+/// Output color behavior, independent of the compositor's protocol.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorMode {
+    Sdr,
+    Hdr,
+    /// SDR using the display's native gamut rather than sRGB.
+    SdrNative,
+}
+
+impl From<bool> for ColorMode {
+    fn from(hdr: bool) -> Self {
+        if hdr { Self::Hdr } else { Self::Sdr }
+    }
 }
 
 /// Resolution and refresh rate. Refresh is in milli-hertz to match the
@@ -318,7 +333,7 @@ impl OutputPlanBuilder {
             .into());
         }
 
-        if matches!(output.hdr, Some(true)) {
+        if matches!(output.color_mode, Some(ColorMode::Hdr)) {
             self.features.push(Feature::Hdr {
                 output_name: output.name.clone(),
             });
@@ -423,7 +438,7 @@ pub struct EnableOutput {
     pub position: Option<(i32, i32)>,
     pub scale: Option<f64>,
     pub transform: Option<Transform>,
-    pub hdr: Option<bool>,
+    pub color_mode: Option<ColorMode>,
 }
 
 /// Compositor-side interface: snapshot the current output layout, wait for
@@ -493,7 +508,7 @@ mod tests {
             name: name.into(),
             mode: None,
             position: None,
-            hdr: None,
+            color_mode: None,
             ..Default::default()
         }
     }
@@ -523,7 +538,7 @@ mod tests {
                     position: Some((0, 0)),
                     scale: Some(1.5),
                     transform: Some(Transform::Normal),
-                    hdr_enabled: Some(true),
+                    color_mode: Some(ColorMode::Hdr),
                 },
                 // All-None head exercises the `Option` fields' serde shape.
                 HeadState {
@@ -533,7 +548,7 @@ mod tests {
                     position: None,
                     scale: None,
                     transform: None,
-                    hdr_enabled: None,
+                    color_mode: None,
                 },
             ],
         };
@@ -607,7 +622,7 @@ mod tests {
             name: String::new(),
             mode: None,
             position: None,
-            hdr: None,
+            color_mode: None,
             ..Default::default()
         });
         assert!(matches!(r, Err(Error::Plan(PlanError::EmptyName))));
@@ -642,7 +657,7 @@ mod tests {
                 refresh_mhz: 60_000,
             }),
             position: None,
-            hdr: None,
+            color_mode: None,
             ..Default::default()
         });
         assert!(matches!(

@@ -6,7 +6,7 @@ use self::display_config::{
 };
 use crate::Result;
 use crate::compositor::{
-    CompositorAdapter, CompositorError, FeatureKind, HeadState, ModeInfo, OutputPlan,
+    ColorMode, CompositorAdapter, CompositorError, FeatureKind, HeadState, ModeInfo, OutputPlan,
     OutputSnapshot, Transform,
 };
 
@@ -29,13 +29,16 @@ impl From<CurrentState> for OutputSnapshot {
                         .any(|id| id.connector == monitor.id.connector)
                 });
 
-                // set `color-mode` to 1 to enable HDR in mutter
-                let hdr_enabled = logical.and_then(|l| {
-                    l.properties
-                        .get("color-mode")
-                        .and_then(|v| u32::try_from(v).ok())
-                        .map(|m| m == 1)
-                });
+                let color_mode = monitor
+                    .properties
+                    .get("color-mode")
+                    .and_then(|v| u32::try_from(v).ok())
+                    .and_then(|mode| match mode {
+                        0 => Some(ColorMode::Sdr),
+                        1 => Some(ColorMode::Hdr),
+                        2 => Some(ColorMode::SdrNative),
+                        _ => None,
+                    });
 
                 HeadState {
                     name: monitor.id.connector.clone(),
@@ -52,7 +55,7 @@ impl From<CurrentState> for OutputSnapshot {
                     position: logical.map(|l| (l.x, l.y)),
                     scale: logical.map(|l| l.scale),
                     transform: logical.and_then(|l| Transform::try_from(l.transform).ok()),
-                    hdr_enabled,
+                    color_mode,
                 }
             })
             .collect();
@@ -108,7 +111,7 @@ impl OutputPlan {
                         .find(|m| m.id.connector == id.connector)?;
                     let current = monitor.modes.iter().find(|m| m.is_current())?;
                     let mut properties: ApplyPropertyMap = HashMap::new();
-                    if let Some(cm) = lm.properties.get("color-mode")
+                    if let Some(cm) = monitor.properties.get("color-mode")
                         && let Ok(cm) = cm.try_clone()
                     {
                         properties.insert("color-mode".to_string(), cm);
@@ -218,17 +221,25 @@ impl OutputPlan {
                 None => existing.map(|lm| lm.primary).unwrap_or(false),
             };
 
-            // 0 = SDR default, 1 = bt2100 HDR.
-            // Absent key = leave whatever the monitor had.
+            // 0 = SDR default, 1 = bt2100 HDR, 2 = SDR native.
+            // An absent key resets to SDR, so carry forward the current value.
             let mut monitor_properties: ApplyPropertyMap = HashMap::new();
-            if let Some(want_hdr) = enable.hdr {
-                let color_mode: u32 = if want_hdr { 1 } else { 0 };
+            if let Some(color_mode) = enable.color_mode {
+                let color_mode = match color_mode {
+                    ColorMode::Sdr => 0,
+                    ColorMode::Hdr => 1,
+                    ColorMode::SdrNative => 2,
+                };
                 monitor_properties.insert(
                     "color-mode".to_string(),
                     zbus::zvariant::Value::U32(color_mode)
                         .try_to_owned()
                         .unwrap(),
                 );
+            } else if let Some(cm) = monitor.properties.get("color-mode")
+                && let Ok(cm) = cm.try_clone()
+            {
+                monitor_properties.insert("color-mode".into(), cm);
             }
             result.push(LogicalMonitorConfig {
                 x,

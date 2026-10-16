@@ -73,7 +73,6 @@ pub struct EdidSpec {
     // used for both EDID serial num and product name string (ie `fauxput-N`)
     // Lifecycle callers pass 0 as placeholder; configfs-vkms re-derives.
     pub instance_index: u32,
-    #[serde(default)]
     pub hdr: bool,
 }
 

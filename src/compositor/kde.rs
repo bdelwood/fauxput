@@ -19,8 +19,8 @@ use wayland_protocols_plasma::output_management::v2::client::{
 use crate::Result;
 use crate::compositor::wayland::WaylandSession;
 use crate::compositor::{
-    CompositorAdapter, CompositorError, FeatureKind, HeadState, ModeInfo, OutputMode, OutputPlan,
-    OutputSnapshot, Transform,
+    ColorMode, CompositorAdapter, CompositorError, FeatureKind, HeadState, ModeInfo, OutputMode,
+    OutputPlan, OutputSnapshot, Transform,
 };
 
 // polls will wait forever
@@ -171,6 +171,16 @@ impl CompositorAdapter for KdeCompositor {
     }
 
     fn apply(&mut self, plan: &OutputPlan) -> Result<()> {
+        if plan
+            .enables
+            .iter()
+            .any(|e| e.color_mode == Some(ColorMode::SdrNative))
+        {
+            return Err(CompositorError::ApplyRejected {
+                reason: "KDE adapter does not support native-gamut SDR",
+            }
+            .into());
+        }
         // Refresh state before computing the diff so we're working with
         // KWin's current view of the world.
         self.session.roundtrip("kde: apply refresh")?;
@@ -252,9 +262,10 @@ impl CompositorAdapter for KdeCompositor {
                 touched += 1;
 
                 // kwin needs both HDR + wide-color-gamut set
-                if let Some(want_hdr) = target.hdr
-                    && head.hdr_enabled != Some(want_hdr)
+                if let Some(color_mode) = target.color_mode
+                    && head.color_mode != Some(color_mode)
                 {
+                    let want_hdr = color_mode == ColorMode::Hdr;
                     cfg.set_high_dynamic_range(&proxy, want_hdr.into());
                     cfg.set_wide_color_gamut(&proxy, want_hdr.into());
                     touched += 2;
@@ -282,7 +293,7 @@ struct Target {
     position: Option<(i32, i32)>,
     scale: Option<f64>,
     transform: Option<Transform>,
-    hdr: Option<bool>,
+    color_mode: Option<ColorMode>,
 }
 
 impl Target {
@@ -299,7 +310,7 @@ impl Target {
             position: enable_entry
                 .and_then(|entry| entry.position)
                 .or(head.position),
-            hdr: enable_entry.and_then(|entry| entry.hdr),
+            color_mode: enable_entry.and_then(|entry| entry.color_mode),
             scale: enable_entry.and_then(|entry| entry.scale).or(head.scale),
             transform: enable_entry
                 .and_then(|entry| entry.transform)
@@ -406,7 +417,7 @@ impl State {
             position: device.position,
             scale: device.scale,
             transform: device.transform,
-            hdr_enabled: device.hdr_enabled,
+            color_mode: device.hdr_enabled.map(ColorMode::from),
         }
     }
 
@@ -736,7 +747,7 @@ mod tests {
             position: None,
             scale: None,
             transform: None,
-            hdr_enabled: None,
+            color_mode: None,
         }
     }
 
@@ -796,7 +807,7 @@ mod tests {
                 name: "fauxput-0".into(),
                 mode: Some(mode),
                 position: Some((100, 0)),
-                hdr: None,
+                color_mode: None,
                 ..Default::default()
             })
             .unwrap()

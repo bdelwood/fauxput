@@ -10,7 +10,9 @@ use std::{
 use crate::{
     Result,
     backend::{CreateOutcome, DisplayBackend, DisplayHandle, pick_backend},
-    compositor::{CompositorAdapter, EnableOutput, ModeInfo, OutputPlan, OutputSnapshot},
+    compositor::{
+        ColorMode, CompositorAdapter, EnableOutput, ModeInfo, OutputPlan, OutputSnapshot,
+    },
     edid::EdidSpec,
     state::{ActiveState, InstanceRecord, LayoutChanges, StateStore},
 };
@@ -77,7 +79,7 @@ impl UpRequest {
             position: Some(position),
             scale: None,
             transform: None,
-            hdr: Some(self.spec.hdr),
+            color_mode: Some(self.spec.hdr.into()),
         }
     }
 }
@@ -261,8 +263,8 @@ impl<'a> Up<'a> {
         snap.heads
             .iter()
             .find(|h| h.name == head_name)
-            .and_then(|h| h.hdr_enabled)
-            .unwrap_or(false)
+            .and_then(|h| h.color_mode)
+            == Some(ColorMode::Hdr)
     }
 
     pub fn place_new_head(&mut self, handle: &DisplayHandle) -> Result<(String, (i32, i32))> {
@@ -509,7 +511,7 @@ fn restore_compositor(
                 position: snap_head
                     .and_then(|h| h.position)
                     .or_else(|| live_head.and_then(|h| h.position)),
-                hdr: snap_head.and_then(|h| h.hdr_enabled),
+                color_mode: snap_head.and_then(|h| h.color_mode),
                 scale: snap_head
                     .and_then(|h| h.scale)
                     .or_else(|| live_head.and_then(|h| h.scale)),

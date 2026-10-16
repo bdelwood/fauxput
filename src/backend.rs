@@ -44,7 +44,6 @@ pub struct FeatureAcceptance {
     /// kernels that fall back to default modes.
     pub edid_applied: bool,
     /// True iff the kernel accepted both the connector `type` (DP) and `supported_colorspaces`
-    #[serde(default)]
     pub hdr_applied: bool,
 }
 

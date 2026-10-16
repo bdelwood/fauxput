@@ -48,6 +48,7 @@ enum Commands {
         #[arg(long)]
         disable_real_outputs: bool,
 
+        /// Advertise HDR and enable it on the virtual output
         #[arg(long)]
         hdr: bool,
     },
