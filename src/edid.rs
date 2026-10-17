@@ -132,12 +132,26 @@ pub fn build(spec: &EdidSpec) -> Result<Vec<u8>> {
         .filter_chromaticity(srgb_chromaticity()?)
         .preferred_timing(build_dtd(&t)?)
         .descriptors(vec![
-            EdidR4Descriptor::DisplayRangeLimits(build_range_limits(&t, spec.refresh_hz)?),
+            EdidR4Descriptor::DisplayRangeLimits(build_range_limits(
+                &t,
+                spec.refresh_hz,
+                spec.hdr,
+            )?),
             EdidR4Descriptor::ProductName(product_name.to_descriptor("product_name")?),
             EdidR4Descriptor::ProductSerialNumber(serial_str.to_descriptor("serial_string")?),
         ]);
 
     if spec.hdr {
+        // CTA requires VIC 1 even when the base block has a preferred timing.
+        let video = redid::EdidExtensionCTA861VideoDataBlock::builder()
+            .add_short_video_descriptor(1)
+            .build();
+        let video_capability = redid::EdidExtensionCTA861VideoCapabilityDataBlock::builder()
+            .qs_quant(redid::EdidExtensionCTA861VideoCapabilityQuantization::Selectable)
+            .pt_scan(redid::EdidExtensionCTA861VideoCapabilityScanBehavior::Underscanned)
+            .it_scan(redid::EdidExtensionCTA861VideoCapabilityScanBehavior::Underscanned)
+            .ce_scan(redid::EdidExtensionCTA861VideoCapabilityScanBehavior::Underscanned)
+            .build();
         let colorimetry = EdidExtensionCTA861ColorimetryDataBlock::builder()
             .bt_2020_ycc(true)
             .bt_2020_rgb(true)
@@ -155,7 +169,10 @@ pub fn build(spec: &EdidSpec) -> Result<Vec<u8>> {
 
         let cta = EdidExtensionCTA861Revision3::builder()
             .native_formats(0)
+            .underscan_it_formats_by_default(true)
             .data_blocks(vec![
+                EdidExtensionCTA861Revision3DataBlock::Video(video),
+                EdidExtensionCTA861Revision3DataBlock::VideoCapability(video_capability),
                 EdidExtensionCTA861Revision3DataBlock::Colorimetry(colorimetry),
                 EdidExtensionCTA861Revision3DataBlock::HDR(hdr_metadata),
             ])
@@ -284,16 +301,28 @@ pub fn build_dtd(t: &Timing) -> Result<EdidDescriptorDetailedTiming> {
 /// Display-range-limits descriptor: narrow +/- Hz / +/-5 kHz windows around the
 /// requested mode plus a max pixel clock. Tells the compositor what range
 /// the (virtual) display will accept.
-pub fn build_range_limits(t: &Timing, refresh_hz: u32) -> Result<EdidR4DisplayRangeLimits> {
+pub fn build_range_limits(
+    t: &Timing,
+    refresh_hz: u32,
+    hdr: bool,
+) -> Result<EdidR4DisplayRangeLimits> {
     let hfreq_khz = t.pixel_clock_khz / t.h_total();
     // +/- 5 kHz around horiz freq
-    let min_h = hfreq_khz.saturating_sub(5).max(1) as u16;
-    let max_h = (hfreq_khz + 5) as u16;
+    let mut min_h = hfreq_khz.saturating_sub(5).max(1) as u16;
+    let mut max_h = (hfreq_khz + 5) as u16;
     // +/- 1 kHz around vert freq
-    let min_v = refresh_hz.saturating_sub(1).max(1) as u16;
-    let max_v = (refresh_hz + 1) as u16;
+    let mut min_v = refresh_hz.saturating_sub(1).max(1) as u16;
+    let mut max_v = (refresh_hz + 1) as u16;
     // set max pixel clock too
-    let max_pclk_mhz = t.pixel_clock_khz.div_ceil(1000) as u16;
+    let mut max_pclk_mhz = t.pixel_clock_khz.div_ceil(1000) as u16;
+    if hdr {
+        // Include CTA VIC 1: 640x480 at 59.94/60 Hz and 31.5 kHz.
+        min_h = min_h.min(31);
+        max_h = max_h.max(32);
+        min_v = min_v.min(59);
+        max_v = max_v.max(60);
+        max_pclk_mhz = max_pclk_mhz.max(26);
+    }
 
     // build the rangelimit
     Ok(EdidR4DisplayRangeLimits::builder()
