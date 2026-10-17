@@ -558,6 +558,11 @@ mod tests {
         assert_eq!(back.heads[0].name, "DP-1");
         assert_eq!(back.heads[0].mode.unwrap().width, 3840);
         assert!(!back.heads[1].enabled);
+        let enables = back.active_enables();
+        assert_eq!(enables[0].scale, Some(1.5));
+        assert_eq!(enables[0].transform, Some(Transform::Normal));
+        assert_eq!(enables[0].color_mode, Some(ColorMode::Hdr));
+        assert_eq!(back.right_edge(), 2560);
     }
 
     /// Capability diff = requested_features - supported_features.

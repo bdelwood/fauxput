@@ -492,6 +492,97 @@ impl CompositorAdapter for GnomeCompositor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compositor::EnableOutput;
+    use display_config::{LogicalMonitor, Monitor, MonitorIdentity, MonitorMode};
+
+    fn state() -> CurrentState {
+        let id = MonitorIdentity {
+            connector: "DP-1".into(),
+            vendor: "test".into(),
+            product: "panel".into(),
+            serial: "1".into(),
+        };
+        CurrentState {
+            serial: 1,
+            monitors: vec![Monitor {
+                id: id.clone(),
+                modes: vec![MonitorMode {
+                    id: "mode".into(),
+                    width: 2560,
+                    height: 1440,
+                    refresh_rate: 60.0,
+                    preferred_scale: 1.0,
+                    supported_scales: vec![1.0, 1.5],
+                    properties: HashMap::from([("is-current".into(), true.into())]),
+                }],
+                properties: HashMap::from([("color-mode".into(), 1u32.into())]),
+            }],
+            logical_monitors: vec![LogicalMonitor {
+                x: 0,
+                y: 0,
+                scale: 1.5,
+                transform: 1,
+                primary: true,
+                monitors: vec![id],
+                properties: HashMap::new(),
+            }],
+            properties: HashMap::from([("layout-mode".into(), 1u32.into())]),
+        }
+    }
+
+    fn color_mode(config: &LogicalMonitorConfig) -> u32 {
+        u32::try_from(&config.monitors[0].properties["color-mode"]).unwrap()
+    }
+
+    #[test]
+    fn snapshot_reads_physical_monitor_hdr_and_restores_geometry() {
+        for (original_mode, expected) in [
+            (0u32, ColorMode::Sdr),
+            (1, ColorMode::Hdr),
+            (2, ColorMode::SdrNative),
+        ] {
+            let mut state = state();
+            state.monitors[0]
+                .properties
+                .insert("color-mode".into(), original_mode.into());
+            let snapshot: OutputSnapshot = state.clone().into();
+            assert_eq!(snapshot.heads[0].color_mode, Some(expected));
+            assert_eq!(snapshot.right_edge(), 960);
+            state.logical_monitors.clear();
+            state.monitors[0]
+                .properties
+                .insert("color-mode".into(), 0u32.into());
+            let plan = OutputPlan::builder()
+                .enable_all(snapshot.active_enables())
+                .unwrap()
+                .build();
+            let config = plan.to_mutter_config(&state);
+            assert_eq!(config[0].scale, 1.5);
+            assert_eq!(config[0].transform, 1);
+            assert_eq!(color_mode(&config[0]), original_mode);
+        }
+
+        let plan = OutputPlan::builder()
+            .enable(EnableOutput {
+                name: "DP-1".into(),
+                color_mode: Some(ColorMode::Sdr),
+                ..Default::default()
+            })
+            .unwrap()
+            .build();
+        assert_eq!(color_mode(&plan.to_mutter_config(&state())[0]), 0);
+    }
+
+    #[test]
+    fn placement_uses_rotated_scaled_size_and_layout_mode() {
+        let mut state = state();
+        let placed = OutputPlan::default().to_mutter_config(&state);
+        assert_eq!(right_edge(&placed, &state), 960);
+        state.properties.insert("layout-mode".into(), 2u32.into());
+        assert_eq!(right_edge(&placed, &state), 1440);
+        let snapshot: OutputSnapshot = state.into();
+        assert_eq!(snapshot.right_edge(), 1440);
+    }
 
     /// End-to-end live test against a running GNOME Wayland session: connects
     /// to the user session bus, reads Mutter's state, runs it through the

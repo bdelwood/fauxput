@@ -363,16 +363,24 @@ mod tests {
             (3840, 2160),
             (3840, 2400),
         ] {
-            let bytes = build(&spec_60(w, h)).expect("valid mode");
-            assert_eq!(bytes.len(), 128, "{w}x{h}");
-            assert_eq!(
-                &bytes[0..8],
-                &[0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00],
-                "header magic {w}x{h}"
-            );
-            assert_eq!(&bytes[18..20], &[0x01, 0x04], "EDID 1.4 version {w}x{h}");
-            assert!(checksum_ok(&bytes), "checksum {w}x{h}");
-            assert_eq!(bytes[126], 0, "extension count {w}x{h}");
+            for hdr in [false, true] {
+                let bytes = build(&EdidSpec {
+                    hdr,
+                    ..spec_60(w, h)
+                })
+                .expect("valid mode");
+                assert_eq!(bytes.len(), if hdr { 256 } else { 128 }, "{w}x{h}");
+                assert_eq!(
+                    &bytes[0..8],
+                    &[0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00],
+                    "header magic {w}x{h}"
+                );
+                assert_eq!(&bytes[18..20], &[0x01, 0x04], "EDID 1.4 version {w}x{h}");
+                for block in bytes.as_chunks::<128>().0 {
+                    assert!(checksum_ok(block), "checksum {w}x{h} hdr={hdr}");
+                }
+                assert_eq!(bytes[126], u8::from(hdr), "extension count {w}x{h}");
+            }
         }
     }
 
@@ -407,31 +415,37 @@ mod tests {
             (3840, 2160),
             (3840, 2400),
         ] {
-            let bytes = build(&spec_60(w, h)).unwrap();
+            for hdr in [false, true] {
+                let bytes = build(&EdidSpec {
+                    hdr,
+                    ..spec_60(w, h)
+                })
+                .unwrap();
 
-            let mut tmp = tempfile::NamedTempFile::new().unwrap();
-            tmp.write_all(&bytes).unwrap();
-            tmp.flush().unwrap();
+                let mut tmp = tempfile::NamedTempFile::new().unwrap();
+                tmp.write_all(&bytes).unwrap();
+                tmp.flush().unwrap();
 
-            let output = Command::new("edid-decode")
-                .arg("--check")
-                .arg(tmp.path())
-                .output()
-                .expect("edid-decode not found. Install it with `v4l-utils`.");
+                let output = Command::new("edid-decode")
+                    .arg("--check")
+                    .arg(tmp.path())
+                    .output()
+                    .expect("edid-decode not found. Install it with `v4l-utils`.");
 
-            let combined = format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert!(
-                output.status.success(),
-                "edid-decode rejected {w}x{h}@60:\n{combined}"
-            );
-            assert!(
-                !combined.contains("FAIL:"),
-                "edid-decode FAIL for {w}x{h}@60:\n{combined}"
-            );
+                let combined = format!(
+                    "{}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(
+                    output.status.success(),
+                    "edid-decode rejected {w}x{h}@60 hdr={hdr}:\n{combined}"
+                );
+                assert!(
+                    !combined.contains("FAIL:"),
+                    "edid-decode FAIL for {w}x{h}@60 hdr={hdr}:\n{combined}"
+                );
+            }
         }
     }
 }

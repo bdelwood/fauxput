@@ -751,6 +751,28 @@ mod tests {
     use super::*;
     use crate::compositor::EnableOutput;
 
+    #[test]
+    fn removed_device_drops_only_its_heads_and_modes() {
+        let mut state = State::default();
+        for id in [1, 2] {
+            state.devices.insert(
+                id,
+                Device {
+                    name: Some(format!("DP-{id}")),
+                    done_seen: true,
+                    current_mode: Some(id + 10),
+                    ..Default::default()
+                },
+            );
+            state.modes.insert(id + 10, (id, ModeData::default()));
+        }
+        state.remove_device(1);
+        state.remove_device(1);
+        assert_eq!(state.live_heads().len(), 1);
+        assert_eq!(state.live_heads()[0].name, "DP-2");
+        assert_eq!(state.modes.keys().copied().collect::<Vec<_>>(), [12]);
+    }
+
     fn head(name: &str, enabled: bool) -> HeadState {
         HeadState {
             name: name.into(),
@@ -849,6 +871,24 @@ mod tests {
         );
         assert_eq!(target_virtual.mode, Some(mode));
         assert_eq!(target_virtual.position, Some((100, 0)));
+
+        for (hdr, wcg, color_mode, expected) in [
+            (Some(false), Some(true), ColorMode::Sdr, (None, Some(false))),
+            (Some(false), Some(true), ColorMode::Hdr, (Some(true), None)),
+            (Some(true), Some(false), ColorMode::Sdr, (Some(false), None)),
+            (Some(true), Some(false), ColorMode::Hdr, (None, Some(true))),
+            (Some(false), Some(false), ColorMode::Sdr, (None, None)),
+            (Some(true), Some(true), ColorMode::Hdr, (None, None)),
+            (None, None, ColorMode::Sdr, (Some(false), Some(false))),
+            (None, None, ColorMode::Hdr, (Some(true), Some(true))),
+        ] {
+            let device = Device {
+                hdr_enabled: hdr,
+                wcg_enabled: wcg,
+                ..Default::default()
+            };
+            assert_eq!(device.color_changes(color_mode), expected);
+        }
     }
 
     // KDE carries transform as a raw i32. 0-7 maps to wl_output.transform;
