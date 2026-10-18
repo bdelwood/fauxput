@@ -124,6 +124,44 @@ _aur-sync TEMPLATE_DIR AUR_REPO:
         git commit -m "Update to v$VERSION" && \
         git push origin master
 
+# Prepare v5 VKMS sources with the compatibility patches for Linux 7.1 or 7.2.
+[group('vkms')]
+[positional-arguments]
+vkms-prepare kernel_series source output:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ! $1 =~ ^7[.][12]$ ]]; then
+        echo 'Kernel series must be 7.1 or 7.2' >&2
+        exit 2
+    fi
+    kernel_series=$1
+    source_dir=$(realpath -e -- "$2/drivers/gpu/drm/vkms")
+    output_dir=$(realpath -m -- "$3")
+    snippets_dir="$PWD/docs/src/snippets"
+    patchset_dir="$snippets_dir/vkms"
+    if [[ -e $output_dir || -L $output_dir ]]; then
+        echo "Output already exists: $output_dir" >&2
+        exit 1
+    fi
+    # Accept only the pinned upstream files, before applying local patches.
+    (cd "$source_dir" && sha256sum --check "$patchset_dir/upstream.sha256")
+    mkdir -- "$output_dir"
+    while read -r checksum source_file; do
+        install -m 0644 -- "$source_dir/$source_file" "$output_dir/$source_file"
+    done < "$patchset_dir/upstream.sha256"
+    install -m 0644 -- "$snippets_dir/Makefile" "$output_dir/Makefile"
+    install -m 0644 -- "$snippets_dir/vkms_oot_shim.h" "$output_dir/vkms_oot_shim.h"
+    sed -e "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"0.3-$kernel_series\"/" \
+        -e "/^PACKAGE_VERSION=/a BUILD_EXCLUSIVE_KERNEL=\"^${kernel_series/./[.]}[.]\"" \
+        "$snippets_dir/dkms.conf" > "$output_dir/dkms.conf"
+    series_dir="$patchset_dir/patches/linux-$kernel_series"
+    while IFS= read -r patch_file; do
+        [[ -n $patch_file && $patch_file != \#* ]] || continue
+        patch --directory "$output_dir" --strip=1 --batch --fuzz=0 < "$series_dir/$patch_file"
+    done < "$series_dir/series"
+    printf 'Prepared VKMS for Linux %s at %s\n' "$kernel_series" "$output_dir"
+    printf 'Build with: make -C %q KDIR=/path/to/matching/kernel/build\n' "$output_dir"
+
 # use insmod to temporarily load patched vkms
 [group('vkms')]
 vkms-insmod:
@@ -131,17 +169,28 @@ vkms-insmod:
     sudo modprobe -r vkms
     sudo insmod {{ VKMS_SRC }}/vkms.ko create_default_dev=0
 
-# Build/rebuild & register vkms-edid-dkms on the host.
+# Register a prepared patchset without resetting displays or reloading VKMS.
 [group('vkms')]
-vkms-dkms:
-    -fauxput reset --yes 2>/dev/null
-    -sudo dkms remove -m vkms-edid -v 0.1 --all 2>/dev/null
-    sudo rm -rf /usr/src/vkms-edid-0.1
-    sudo cp -rT {{ VKMS_SRC }} /usr/src/vkms-edid-0.1
-    sudo dkms add -m vkms-edid -v 0.1
-    sudo dkms install -m vkms-edid -v 0.1
-    -sudo modprobe -r vkms 2>/dev/null
-    sudo modprobe vkms
+vkms-dkms version="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source_dir='{{ VKMS_SRC }}'
+    requested_version='{{ version }}'
+    test -n "$source_dir"
+    source_version=$(sed -n 's/^PACKAGE_VERSION="\([^"]*\)"$/\1/p' "$source_dir/dkms.conf")
+    case "$source_version" in 0.1|0.2|0.3-7.1|0.3-7.2) ;; *) echo 'Unrecognized DKMS source version' >&2; exit 2 ;; esac
+    if [[ -n $requested_version && $requested_version != "$source_version" ]]; then
+        echo "Requested version does not match $source_dir/dkms.conf" >&2
+        exit 2
+    fi
+    destination="/usr/src/vkms-edid-$source_version"
+    if ! sudo test ! -e "$destination" || ! sudo test ! -L "$destination"; then
+        echo "Cannot create $destination without overwriting existing state. See the migration guide." >&2
+        exit 1
+    fi
+    sudo cp -a "$source_dir" "$destination"
+    sudo dkms add -m vkms-edid -v "$source_version"
+    sudo dkms install -m vkms-edid -v "$source_version" -k "$(uname -r)"
 
 # helpers for quick testing
 [group('runtime')]

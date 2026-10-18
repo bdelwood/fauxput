@@ -1,0 +1,11 @@
+Subject: [PATCH] vkms: use local DRM string helpers for out-of-tree builds
+
+The v5 series exports helpers from DRM core. An out-of-tree VKMS build
+cannot change those exports in the installed kernel. The companion shim
+provides local names used only by vkms_config_show().
+
+--- a/vkms_config.c
++++ b/vkms_config.c
+@@ -13 +13,2 @@
++#include "vkms_oot_shim.h"
+ #include "vkms_config.h"

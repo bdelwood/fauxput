@@ -1,0 +1,59 @@
+Subject: [PATCH] vkms: use the released Linux 7.1 atomic state type
+
+The v5 series is based on drm-misc-next, where drm_atomic_state was
+renamed to drm_atomic_commit. Released Linux 7.1 still uses the old
+name. This is a type-name adaptation only; Linux 7.2 needs no such patch.
+
+--- a/vkms_crtc.c
++++ b/vkms_crtc.c
+@@ -113,3 +113,3 @@
+ static int vkms_crtc_atomic_check(struct drm_crtc *crtc,
+-				  struct drm_atomic_commit *state)
++				  struct drm_atomic_state *state)
+ {
+@@ -165,3 +165,3 @@
+ static void vkms_crtc_atomic_begin(struct drm_crtc *crtc,
+-				   struct drm_atomic_commit *state)
++				   struct drm_atomic_state *state)
+ 	__acquires(&vkms_output->lock)
+@@ -177,3 +177,3 @@
+ static void vkms_crtc_atomic_flush(struct drm_crtc *crtc,
+-				   struct drm_atomic_commit *state)
++				   struct drm_atomic_state *state)
+ 	__releases(&vkms_output->lock)
+--- a/vkms_drv.c
++++ b/vkms_drv.c
+@@ -65,3 +65,3 @@
+-static void vkms_atomic_commit_tail(struct drm_atomic_commit *old_state)
++static void vkms_atomic_commit_tail(struct drm_atomic_state *old_state)
+ {
+ 	struct drm_device *dev = old_state->dev;
+@@ -105,3 +105,3 @@
+-static int vkms_atomic_check(struct drm_device *dev, struct drm_atomic_commit *state)
++static int vkms_atomic_check(struct drm_device *dev, struct drm_atomic_state *state)
+ {
+ 	struct drm_crtc *crtc;
+--- a/vkms_plane.c
++++ b/vkms_plane.c
+@@ -89,3 +89,3 @@
+ static void vkms_plane_atomic_update(struct drm_plane *plane,
+-				     struct drm_atomic_commit *state)
++				     struct drm_atomic_state *state)
+ {
+@@ -120,3 +120,3 @@
+ static int vkms_plane_atomic_check(struct drm_plane *plane,
+-				   struct drm_atomic_commit *state)
++				   struct drm_atomic_state *state)
+ {
+--- a/vkms_writeback.c
++++ b/vkms_writeback.c
+@@ -34,3 +34,3 @@
+ static int vkms_wb_atomic_check(struct drm_connector *connector,
+-				struct drm_atomic_commit *state)
++				struct drm_atomic_state *state)
+ {
+@@ -125,3 +125,3 @@
+ static void vkms_wb_atomic_commit(struct drm_connector *conn,
+-				  struct drm_atomic_commit *state)
++				  struct drm_atomic_state *state)
+ {

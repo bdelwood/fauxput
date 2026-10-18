@@ -1,4 +1,4 @@
-# Out-of-tree build of patched vkms (with v3 EDID-via-configfs support).
+# Out-of-tree build of VKMS with Chauvet's v3 or v5 configfs series.
 # Targets the running kernel by default; override KDIR for cross-builds.
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
@@ -21,8 +21,7 @@ vkms-y := \
 	vkms_config.o \
 	vkms_configfs.o
 
-# vkms_config_show / vkms_configfs touch sysfs/configfs heavily; ensure
-# CONFIG_DRM_VKMS_CONFIGFS is enabled in the running kernel's .config.
+# Requires the running kernel's DRM, configfs, and module build support.
 
 all:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
