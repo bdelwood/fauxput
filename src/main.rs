@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap_verbosity_flag::{Verbosity, WarnLevel};
 use colored::Colorize;
 use dialoguer::Confirm;
@@ -9,9 +9,11 @@ use std::process::ExitCode;
 
 use fauxput::backend::DisplayBackend;
 use fauxput::backend::configfs_vkms::ConfigfsVkms;
-use fauxput::edid::EdidSpec;
 use fauxput::lifecycle::{self, UpRequest};
 use fauxput::state::StateStore;
+
+mod config;
+use config::UpOptions;
 
 #[derive(Parser)]
 #[command(name = "fauxput", version, about="Linux virtual display manager.", long_about=None)]
@@ -26,31 +28,14 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Create a virtual display.
+    #[command(disable_help_flag = true, arg = clap::Arg::new("help").long("help").action(clap::ArgAction::Help).help("Print help"))]
     Up {
-        // Set display width in pixels
-        #[arg(short, long)]
-        width: u32,
-
-        // Set display height in pixels
-        #[arg(short, long)]
-        height: u32,
-
-        // Set fps
-        #[arg(short, long, default_value_t = 60)]
-        fps: u32,
-
-        /// Make the new fauxput head the compositor's primary output
+        /// Use a named profile from fauxput/config.toml
         #[arg(long)]
-        primary: bool,
+        profile: Option<String>,
 
-        /// Disable all physical displays
-        /// Potentially useful to force the virtual screen as the only screen for new windows.
-        #[arg(long)]
-        disable_real_outputs: bool,
-
-        /// Advertise HDR and enable it on the virtual output
-        #[arg(long)]
-        hdr: bool,
+        #[command(flatten)]
+        options: UpOptions,
     },
 
     Down,
@@ -67,7 +52,8 @@ enum Commands {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
 
     // set up logging/verbosity
     env_logger::Builder::new()
@@ -78,14 +64,12 @@ fn main() -> ExitCode {
         .init();
 
     let result = match cli.command {
-        Commands::Up {
-            width,
-            height,
-            fps,
-            primary,
-            disable_real_outputs,
-            hdr,
-        } => up(width, height, fps, primary, disable_real_outputs, hdr),
+        Commands::Up { profile, options } => options
+            .resolve(
+                profile.as_deref(),
+                matches.subcommand_matches("up").expect("parsed up command"),
+            )
+            .and_then(up),
         Commands::Down => down(),
         Commands::Status { json } => status(json),
         Commands::Reset { yes } => reset(yes),
@@ -100,28 +84,14 @@ fn main() -> ExitCode {
     }
 }
 
-fn up(
-    width: u32,
-    height: u32,
-    fps: u32,
-    make_primary: bool,
-    disable_real_outputs: bool,
-    hdr: bool,
-) -> Result<()> {
-    let outcome = lifecycle::up(&UpRequest {
-        spec: EdidSpec {
-            width,
-            height,
-            refresh_hz: fps,
-            // Placeholder: the configfs-vkms backend re-derives this from
-            // the slot it allocates so the EDID serial matches the slug.
-            instance_index: 0,
-            hdr,
-        },
-        make_primary,
-        disable_real_outputs,
-    })
-    .with_context(|| format!("failed to create {width}x{height}@{fps} virtual display"))?;
+fn up(request: UpRequest) -> Result<()> {
+    let (width, height, fps) = (
+        request.spec.width,
+        request.spec.height,
+        request.spec.refresh_hz,
+    );
+    let outcome = lifecycle::up(&request)
+        .with_context(|| format!("failed to create {width}x{height}@{fps} virtual display"))?;
 
     println!(
         "{} {} ({width}x{height}@{fps}Hz requested)",
@@ -139,7 +109,7 @@ fn up(
         println!("         falling back to its built-in default mode list");
     }
 
-    if hdr && !outcome.hdr_attached {
+    if request.spec.hdr && !outcome.hdr_attached {
         println!();
         println!(
             "{} `--hdr` set but HDR didn't fully get enabled by the compositor.",

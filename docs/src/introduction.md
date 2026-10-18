@@ -8,6 +8,8 @@ To run fauxput, you'll need:
 
 The [kernel dependency guide](./kernel-dependency.md) covers the OOT module build and install. For the API reference, see the [generated rustdoc](https://bdelwood.github.io/fauxput/rustdoc/fauxput/).
 
+Use [profiles](https://github.com/bdelwood/fauxput#profiles) to bring up preconfigured virtual displays.
+
 ## Project links
 
 - [GitHub repository](https://github.com/bdelwood/fauxput)

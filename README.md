@@ -88,6 +88,32 @@ Force clean :
 fauxput reset --yes
 ```
 
+## Profiles
+
+Define presets in `~/.config/fauxput/config.toml` (or `$XDG_CONFIG_HOME/fauxput/config.toml`):
+
+```toml
+[profiles.monitor]
+width = 3840
+height = 2160
+scale = 1.5
+
+[profiles.tv]
+width = 3840
+height = 2160
+scale = 1.0
+hdr = true
+```
+
+```bash
+fauxput up --profile monitor
+fauxput up --profile tv --fps 30 --hdr=false
+```
+
+Profiles accept `width`, `height`, `fps`, `scale`, `hdr`, `primary`, and `disable_real_outputs`. CLI options override profile values.
+
+Scale is a multiplier, e.g. `1.25` means 125%. Omit it to use the compositor's setting.
+
 ## DE / Sunshine support
 
 | Desktop | Supported version | Status | HDR output |
@@ -115,7 +141,6 @@ HDR streaming on Plasma also requires KWin and Sunshine capture changes. See the
     - [x] Mutter
     - [ ] wlroots family
 - [ ] VRR
-- [ ] Preset profiles
 
 ## License
 

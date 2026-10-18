@@ -49,6 +49,8 @@ fn connect_compositor() -> Option<Box<dyn CompositorAdapter>> {
 #[derive(Debug, Clone)]
 pub struct UpRequest {
     pub spec: EdidSpec,
+    /// Virtual display scale. None leaves the choice to the compositor.
+    pub scale: Option<f64>,
     /// Mark the new fauxput head as the compositor's primary output.
     pub make_primary: bool,
     /// Turn off every real output while the fauxput head is active.
@@ -74,7 +76,7 @@ impl UpRequest {
             name: name.to_string(),
             mode: Some(self.mode()),
             position: Some(position),
-            scale: None,
+            scale: self.scale,
             transform: None,
             color_mode: Some(self.spec.hdr.into()),
         }
