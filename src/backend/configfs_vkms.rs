@@ -54,7 +54,7 @@ enum Payload {
     ConnectorDisconnected,
     /// `DRM_MODE_CONNECTOR_DisplayPort` (10). Chauvet's v4 vkms patches
     /// The vkms patch HDR work only picks up HDR for DP, HDMI, and eDP connector types
-    // TODO: revisit later when virtual EDID has maturedset.
+    // TODO: use Virtual when VKMS exposes HDR properties for that connector type.
     ConnectorTypeDp,
     // bitmask
     ColorspacesBt2020Hdr,

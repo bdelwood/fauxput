@@ -251,7 +251,6 @@ pub enum Feature {
     Primary { output_name: String },
 
     Hdr { output_name: String },
-    // TODO: VRR, tearing?
 }
 
 /// What a caller wants the compositor to do.

@@ -111,7 +111,7 @@ Sunshine $\geq$ 2026.4 portal capture works on any of the above once the adapter
 - [ ] Additional compositor support
     - [x] Mutter
     - [ ] wlroots family
-- [ ] HDR & VRR
+- [ ] VRR
 - [ ] Preset profiles
 
 ## License

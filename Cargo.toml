@@ -21,8 +21,7 @@ libc = "0.2"
 log = "0.4"
 rustix = { version = "1", features = ["event"] }
 # Pinned to my fork which includes HDR.
-# TODO: switch back to repo once the PR merges
-# TODO: switch to crates.io when HDR + missing EdidDetailedTimingPixelClock re-export are in a release
+# TODO: switch to an upstream release with HDR support: https://github.com/mripard/redid/pull/29
 redid = { git = "https://github.com/bdelwood/redid", branch = "feat/hdr-metadata" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
