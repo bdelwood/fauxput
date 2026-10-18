@@ -27,11 +27,11 @@ fmt-check:
 
 [group('dev')]
 lint:
-    cargo clippy --all-targets -- -D warnings
+    cargo clippy --all-targets --all-features -- -D warnings
 
 [group('dev')]
 test *ARGS:
-    cargo test --release {{ ARGS }}
+    cargo test --release --all-features {{ ARGS }}
 
 [group('dev')]
 build:

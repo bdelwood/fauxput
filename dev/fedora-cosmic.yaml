@@ -1,0 +1,56 @@
+#cloud-config
+hostname: fauxput-test-cosmic
+fqdn: fauxput-test-cosmic.local
+
+users:
+  - name: test
+    groups: [wheel, input, video]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: false
+    plain_text_passwd: test
+    shell: /bin/bash
+
+ssh_pwauth: true
+
+packages:
+  - libxcvt
+  - libcap
+  - openssh-server
+  - edid-decode
+  - jq
+  - just
+  - bats
+  - wlr-randr
+  - selinux-policy-targeted
+
+write_files:
+  - path: /etc/systemd/system/getty@tty1.service.d/autologin.conf
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=-/sbin/agetty --autologin test --noclear %I $TERM
+  - path: /home/test/.bash_profile
+    defer: true
+    owner: test:test
+    permissions: '0644'
+    content: |
+      if [[ $- == *i* && -z ${WAYLAND_DISPLAY:-} && ${XDG_VTNR:-} == 1 ]]; then
+          exec start-cosmic
+      fi
+  - path: /etc/modules-load.d/vkms.conf
+    content: |
+      vkms
+  - path: /etc/modprobe.d/vkms.conf
+    content: |
+      options vkms create_default_dev=0
+  - path: /etc/selinux/config
+    defer: true
+    content: |
+      SELINUX=permissive
+      SELINUXTYPE=targeted
+
+runcmd:
+  - systemctl enable --now sshd
+  - dnf install -y --exclude='kernel*' @cosmic-desktop
+  - loginctl enable-linger test
+  - systemctl set-default multi-user.target

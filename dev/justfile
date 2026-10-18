@@ -4,6 +4,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 HERE := source_directory()
 VKMS_SRC := env_var_or_default("VKMS_SRC", "")
+FEDORA_IMAGE := "images:fedora/44/cloud"
 
 default:
     @just --list --justfile {{ HERE }}/justfile
@@ -15,17 +16,20 @@ test-gnome *args:
 
 # Bring up a Fedora VM with vkms-edid-dkms loaded.
 vm-up flavor="gnome":
-    incus init images:fedora/44/cloud fauxput-test-{{ flavor }} --vm \
+    test -f {{ HERE }}/fedora-{{ flavor }}.yaml
+    test -f "{{ VKMS_SRC }}/dkms.conf"
+    incus init {{ FEDORA_IMAGE }} fauxput-test-{{ flavor }} --vm \
         --config user.user-data="$(cat {{ HERE }}/fedora-{{ flavor }}.yaml)" \
         --config limits.cpu=12 --config limits.memory=4GiB
     incus config device add fauxput-test-{{ flavor }} vkms-src disk \
-        source={{ VKMS_SRC }} path=/mnt/vkms-src
+        source={{ VKMS_SRC }} path=/mnt/vkms-src readonly=true
     incus config device add fauxput-test-{{ flavor }} fauxput-src disk \
-        source={{ HERE }}/.. path=/mnt/fauxput-src
+        source={{ HERE }}/.. path=/mnt/fauxput-src readonly=true
     incus start fauxput-test-{{ flavor }}
     @just _wait-agent {{ flavor }}
     @echo "==> cloud-init provisioning"
-    -incus exec fauxput-test-{{ flavor }} -- cloud-init status --wait
+    incus exec fauxput-test-{{ flavor }} -- cloud-init status --wait || test "$?" -eq 2
+    @just vm-vkms-install {{ flavor }}
     incus restart fauxput-test-{{ flavor }}
     @just _wait-agent {{ flavor }}
     @just _wait-de-{{ flavor }}
@@ -46,7 +50,7 @@ vm-reset flavor="gnome":
 
 # Copy the host-built fauxput binary into the VM and setcap it.
 vm-install flavor="gnome":
-    cd {{ HERE }}/.. && just build
+    cd {{ HERE }}/.. && cargo build --release --all-features
     incus file push {{ HERE }}/../target/release/fauxput fauxput-test-{{ flavor }}/usr/local/bin/fauxput --mode=0755
     incus exec fauxput-test-{{ flavor }} -- setcap cap_dac_override+ep /usr/local/bin/fauxput
 
@@ -54,14 +58,32 @@ vm-install flavor="gnome":
 vm-shell flavor="gnome":
     incus exec fauxput-test-{{ flavor }} -- sudo -iu test
 
+# Install the supplied VKMS sources in a newly provisioned VM.
+vm-vkms-install flavor="gnome":
+    incus exec fauxput-test-{{ flavor }} -- dnf install -y dkms gcc grubby kernel-devel kernel-modules kernel-modules-extra
+    incus exec fauxput-test-{{ flavor }} -- bash -euc '\
+        kernelver=$(uname -r); \
+        source /mnt/vkms-src/dkms.conf; \
+        source_dir="/usr/src/$PACKAGE_NAME-$PACKAGE_VERSION"; \
+        test ! -e "$source_dir"; \
+        cp -a /mnt/vkms-src "$source_dir"; \
+        dkms add -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION"; \
+        kernel=$(rpm -q --queryformat "%{VERSION}-%{RELEASE}.%{ARCH}\n" kernel-devel | sort -V | tail -1); \
+        dkms install -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" -k "$kernel"; \
+        dracut -f --kver "$kernel"; \
+        grubby --set-default "/boot/vmlinuz-$kernel"'
+
 # Rebuild vkms-edid-dkms inside the VM after editing $VKMS_SRC.
 vm-vkms-rebuild flavor="gnome":
-    incus exec fauxput-test-{{ flavor }} -- bash -c '\
-        -dkms remove -m vkms-edid -v 0.1 --all 2>/dev/null; \
-        rm -rf /usr/src/vkms-edid-0.1; \
-        cp -rT /mnt/vkms-src /usr/src/vkms-edid-0.1; \
-        dkms add -m vkms-edid -v 0.1; \
-        dkms install -m vkms-edid -v 0.1'
+    incus exec fauxput-test-{{ flavor }} -- bash -euc '\
+        kernelver=$(uname -r); \
+        source /mnt/vkms-src/dkms.conf; \
+        if [[ -n "$(dkms status -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION")" ]]; then \
+            dkms remove -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" --all; \
+        fi; \
+        cp -aT /mnt/vkms-src "/usr/src/$PACKAGE_NAME-$PACKAGE_VERSION"; \
+        dkms add -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION"; \
+        dkms install -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" -k "$kernelver"'
     incus restart fauxput-test-{{ flavor }}
     @just _wait-agent {{ flavor }}
     @just _wait-de-{{ flavor }}
@@ -73,14 +95,24 @@ vm-down flavor="gnome":
 [private]
 _wait-agent flavor:
     @echo "==> waiting for incus agent ({{ flavor }})"
-    until incus exec fauxput-test-{{ flavor }} -- true 2>/dev/null; do sleep 2; done
+    timeout 180 bash -c 'until incus exec fauxput-test-{{ flavor }} -- true 2>/dev/null; do sleep 2; done'
 
 [private]
 _wait-de-gnome:
-    @echo "==> waiting for GDM"
-    until incus exec fauxput-test-gnome -- systemctl is-active --quiet gdm 2>/dev/null; do sleep 5; done
+    @echo "==> waiting for GNOME session"
+    until incus exec fauxput-test-gnome -- pgrep -u test -x gnome-shell >/dev/null 2>&1; do sleep 5; done
+
+[private]
+_wait-de-kde:
+    @echo "==> waiting for Plasma session"
+    until incus exec fauxput-test-kde -- pgrep -u test -x plasmashell >/dev/null 2>&1; do sleep 5; done
 
 [private]
 _wait-de-sway:
     @echo "==> waiting for sway session"
     until incus exec fauxput-test-sway -- pgrep -u test -x sway >/dev/null 2>&1; do sleep 5; done
+
+[private]
+_wait-de-cosmic:
+    @echo "==> waiting for COSMIC session"
+    until incus exec fauxput-test-cosmic -- pgrep -u test -x cosmic-comp >/dev/null 2>&1; do sleep 5; done

@@ -1,6 +1,6 @@
 # fauxput dev harness
 
-Incus-managed Fedora test VMs for fauxput.
+Incus-managed Fedora 44 test VMs for fauxput.
 
 Only use disposable hosts for these tests. They change display configuration and can disrupt the desktop session.
 
@@ -12,7 +12,9 @@ Only use disposable hosts for these tests. They change display configuration and
 ## Flavors
 
 - `gnome` — Mutter + GDM auto-login + Sunshine (end-to-end streaming)
+- `kde` - KWin + Plasma
 - `sway` — Sway + waybar + wdisplays
+- `cosmic` - COSMIC desktop
 
 ## Commands
 
@@ -26,6 +28,12 @@ just dev vm-down <flavor>          # delete the VM
 ```
 
 Flavor defaults to `gnome`.
+
+## wlr backend
+
+Build with `cargo build --release --features wlr`. HDR, primary-output selection, and mirrored layouts are not supported yet.
+
+See [COSMIC hotplug limitations](../docs/src/troubleshooting.md#cosmic-crashes-or-freezes-when-changing-displays).
 
 ## Display lifecycle tests
 
