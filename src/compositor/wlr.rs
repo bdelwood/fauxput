@@ -19,8 +19,8 @@ use wayland_protocols_wlr::output_management::v1::client::{
 use crate::{
     Result,
     compositor::{
-        ColorMode, CompositorAdapter, CompositorError, EnableOutput, FeatureKind, HeadState,
-        OutputMode, OutputPlan, OutputSnapshot, Transform, wayland::WaylandSession,
+        CompositorAdapter, CompositorError, FeatureKind, HeadState, OutputMode, OutputPlan,
+        OutputSnapshot, Transform, wayland::WaylandSession,
     },
 };
 
@@ -83,10 +83,11 @@ impl WlrCompositor {
         // wlr requires each head exactly once, including untouched outputs.
         for (id, device) in &self.session.state.devices {
             let head = self.session.state.head(device);
-            let Some(target) = plan.wlr_target(&head) else {
+            let target = plan.target_for(&head);
+            if !target.enabled {
                 cfg.disable_head(&device.proxy);
                 continue;
-            };
+            }
             let config = cfg.enable_head(&device.proxy, self.session.qhandle(), ());
             if let Some(mode) = target.mode
                 && (!head.enabled || Some(mode) != head.mode)
@@ -162,27 +163,7 @@ impl CompositorAdapter for WlrCompositor {
     }
 
     fn apply(&mut self, plan: &OutputPlan) -> Result<()> {
-        if plan.enables.iter().any(|enable| {
-            matches!(
-                enable.color_mode,
-                Some(ColorMode::Hdr | ColorMode::SdrNative)
-            )
-        }) {
-            return Err(CompositorError::ApplyRejected {
-                reason: "wlr adapter does not support color modes",
-            }
-            .into());
-        }
-        if plan.enables.iter().any(|enable| {
-            enable
-                .scale
-                .is_some_and(|scale| !scale.is_finite() || scale <= 0.0)
-        }) {
-            return Err(CompositorError::ApplyRejected {
-                reason: "output scale must be finite and positive",
-            }
-            .into());
-        }
+        let plan = plan.for_adapter(self);
 
         // Hotplug can invalidate the serial between refresh and apply.
         for attempt in 0..2 {
@@ -200,7 +181,7 @@ impl CompositorAdapter for WlrCompositor {
                 }
                 .into());
             }
-            match self.submit(plan, serial)? {
+            match self.submit(&plan, serial)? {
                 ApplyResult::Applied => return Ok(()),
                 ApplyResult::Failed => {
                     return Err(CompositorError::ApplyFailed { reason: None }.into());
@@ -446,72 +427,3 @@ impl Dispatch<ZwlrOutputConfigurationV1, ()> for State {
 }
 
 wayland_client::delegate_noop!(State: ignore ZwlrOutputConfigurationHeadV1);
-
-impl OutputPlan {
-    fn wlr_target(&self, head: &HeadState) -> Option<EnableOutput> {
-        let enable = self.enables.iter().find(|entry| entry.name == head.name);
-        if self.disables.contains(&head.name) || (enable.is_none() && !head.enabled) {
-            return None;
-        }
-        Some(EnableOutput {
-            name: head.name.clone(),
-            mode: enable.and_then(|entry| entry.mode).or(head.mode),
-            position: enable.and_then(|entry| entry.position).or(head.position),
-            scale: enable.and_then(|entry| entry.scale).or(head.scale),
-            transform: enable.and_then(|entry| entry.transform).or(head.transform),
-            color_mode: enable.and_then(|entry| entry.color_mode),
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::compositor::ModeInfo;
-
-    #[test]
-    fn plan_preserves_layout_and_applies_overrides() {
-        let mut head = HeadState {
-            name: "DP-1".into(),
-            enabled: true,
-            mode: Some(ModeInfo {
-                width: 2560,
-                height: 1440,
-                refresh_mhz: 60_000,
-            }),
-            position: Some((100, 50)),
-            scale: Some(1.25),
-            transform: Some(Transform::Rot90),
-            color_mode: Some(ColorMode::Hdr),
-        };
-        let untouched = OutputPlan::default().wlr_target(&head).unwrap();
-        assert_eq!(untouched.mode, head.mode);
-        assert_eq!(untouched.position, head.position);
-        assert_eq!(untouched.scale, head.scale);
-        assert_eq!(untouched.transform, head.transform);
-        assert_eq!(untouched.color_mode, None);
-
-        let plan = OutputPlan::builder()
-            .enable(EnableOutput {
-                name: head.name.clone(),
-                position: Some((0, 0)),
-                scale: Some(1.5),
-                color_mode: Some(ColorMode::Sdr),
-                ..Default::default()
-            })
-            .unwrap()
-            .build();
-        head.enabled = false;
-        assert!(OutputPlan::default().wlr_target(&head).is_none());
-        let enabled = plan.wlr_target(&head).unwrap();
-        assert_eq!(enabled.color_mode, Some(ColorMode::Sdr));
-        assert_eq!(enabled.position, Some((0, 0)));
-        assert_eq!(enabled.scale, Some(1.5));
-        assert_eq!(enabled.mode, head.mode);
-        assert_eq!(enabled.transform, head.transform);
-
-        head.enabled = true;
-        let plan = OutputPlan::builder().disable(&head.name).unwrap().build();
-        assert!(plan.wlr_target(&head).is_none());
-    }
-}

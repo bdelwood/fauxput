@@ -81,19 +81,6 @@ impl<S: 'static> WaylandSession<S> {
         })
     }
 
-    /// Send pending requests to the server without waiting for a reply.
-    /// Use when issuing a fire-and-forget like `apply()` followed by a
-    /// poll loop that watches for the server-side completion event.
-    pub fn flush(&mut self, ctx: &'static str) -> Result<()> {
-        self.eq
-            .flush()
-            .map_err(|source| CompositorError::Dispatch {
-                context: ctx,
-                source: wayland_client::DispatchError::Backend(source),
-            })?;
-        Ok(())
-    }
-
     /// Bounded event-driven wait. Drains anything sitting on the queue,
     /// calls `poll`, and, if `poll` returns `None`, blocks on the wayland
     /// socket itself until either the server sends new events
@@ -128,17 +115,35 @@ impl<S: 'static> WaylandSession<S> {
             let Some(reader) = self.eq.prepare_read() else {
                 continue;
             };
-            self.flush("wayland: poll flush")?;
+            let events = match self.eq.flush() {
+                Ok(()) => PollFlags::IN,
+                Err(WaylandError::Io(err)) if err.kind() == ErrorKind::WouldBlock => {
+                    PollFlags::IN | PollFlags::OUT
+                }
+                Err(source) => {
+                    return Err(CompositorError::Dispatch {
+                        context: "wayland: poll flush",
+                        source: wayland_client::DispatchError::Backend(source),
+                    }
+                    .into());
+                }
+            };
             let fd = reader.connection_fd();
             let ts = Timespec {
                 tv_sec: remaining.as_secs() as i64,
                 tv_nsec: remaining.subsec_nanos() as i64,
             };
-            let mut pollfds = [PollFd::new(&fd, PollFlags::IN)];
+            let mut pollfds = [PollFd::new(&fd, events)];
             match event::poll(&mut pollfds, Some(&ts)) {
                 Ok(0) | Err(Errno::INTR) => continue,
                 Ok(_) => {}
                 Err(err) => return Err(std::io::Error::from(err).into()),
+            }
+            if !pollfds[0]
+                .revents()
+                .intersects(PollFlags::IN | PollFlags::ERR | PollFlags::HUP | PollFlags::NVAL)
+            {
+                continue;
             }
             match reader.read() {
                 Ok(_) => {}
@@ -170,4 +175,69 @@ impl ObjectData for SyncDone {
     }
 
     fn destroyed(&self, _: ObjectId) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn backpressure_times_out_and_recovers() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        client.set_nonblocking(true).unwrap();
+        let mut filled = 0;
+        loop {
+            match client.write(&[0; 4096]) {
+                Ok(n) => filled += n,
+                Err(err) if err.kind() == ErrorKind::WouldBlock => break,
+                Err(err) => panic!("{err}"),
+            }
+        }
+        let conn = Connection::from_socket(client).unwrap();
+        let eq = conn.new_event_queue::<()>();
+        let mut session = WaylandSession {
+            qhandle: eq.handle(),
+            conn,
+            eq,
+            state: (),
+        };
+        let done = Arc::new(SyncDone::default());
+        let callback = session
+            .conn
+            .send_request(
+                &session.conn.display(),
+                wl_display::Request::Sync {},
+                Some(done.clone()),
+            )
+            .unwrap();
+
+        let result = session.poll_until("backpressure", Duration::from_millis(20), |_| {
+            Ok(done.0.load(Ordering::Relaxed).then_some(()))
+        });
+        assert!(matches!(
+            result,
+            Err(crate::Error::Compositor(CompositorError::Timeout { .. }))
+        ));
+
+        server
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let peer = std::thread::spawn(move || {
+            // Drain the filler and sync request, then send wl_callback.done.
+            server.read_exact(&mut vec![0; filled + 12]).unwrap();
+            let reply = [callback.protocol_id(), 12 << 16, 0]
+                .into_iter()
+                .flat_map(u32::to_ne_bytes)
+                .collect::<Vec<_>>();
+            server.write_all(&reply).unwrap();
+            server
+        });
+        let result = session.poll_until("sync reply", Duration::from_secs(2), |_| {
+            Ok(done.0.load(Ordering::Relaxed).then_some(()))
+        });
+        let _server = peer.join().unwrap();
+        result.unwrap();
+    }
 }

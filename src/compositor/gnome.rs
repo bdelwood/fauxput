@@ -378,7 +378,11 @@ impl CompositorAdapter for GnomeCompositor {
 
     /// Features mutter natively honors.
     fn supported_features(&self) -> HashSet<FeatureKind> {
-        HashSet::from([FeatureKind::Primary, FeatureKind::Hdr])
+        HashSet::from([
+            FeatureKind::Primary,
+            FeatureKind::Hdr,
+            FeatureKind::SdrNative,
+        ])
     }
 
     fn snapshot(&mut self) -> Result<OutputSnapshot> {
@@ -386,6 +390,7 @@ impl CompositorAdapter for GnomeCompositor {
     }
 
     fn apply(&mut self, plan: &OutputPlan) -> Result<()> {
+        let plan = plan.for_adapter(self);
         // Refresh the serial
         let state = self.current_state()?;
         let logical = plan.to_mutter_config(&state);

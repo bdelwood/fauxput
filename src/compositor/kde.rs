@@ -144,21 +144,11 @@ impl CompositorAdapter for KdeCompositor {
     }
 
     fn apply(&mut self, plan: &OutputPlan) -> Result<()> {
-        if plan
-            .enables
-            .iter()
-            .any(|e| e.color_mode == Some(ColorMode::SdrNative))
-        {
-            return Err(CompositorError::ApplyRejected {
-                reason: "KDE adapter does not support native-gamut SDR",
-            }
-            .into());
-        }
+        let plan = plan.for_adapter(self);
         // Refresh state before computing the diff so we're working with
         // KWin's current view of the world.
         self.session.roundtrip("kde: apply refresh")?;
         let live = self.session.state.live_heads();
-        let plan = plan.clone();
 
         // KDE's `set_priority` is 1-indexed
         // 0 is the unranked sentinel
@@ -190,7 +180,7 @@ impl CompositorAdapter for KdeCompositor {
                 let Some(proxy) = device.proxy.clone() else {
                     continue;
                 };
-                let target = Target::for_head(head, &plan);
+                let target = plan.target_for(head);
 
                 // enable/disable diff
                 if target.enabled != head.enabled {
@@ -261,39 +251,6 @@ impl CompositorAdapter for KdeCompositor {
             self.apply(&enable_plan)?;
         }
         self.apply(plan)
-    }
-}
-
-/// What a single head should look like after the plan is applied.
-struct Target {
-    enabled: bool,
-    mode: Option<ModeInfo>,
-    position: Option<(i32, i32)>,
-    scale: Option<f64>,
-    transform: Option<Transform>,
-    color_mode: Option<ColorMode>,
-}
-
-impl Target {
-    fn for_head(head: &HeadState, plan: &OutputPlan) -> Self {
-        let enable_entry = plan.enables.iter().find(|entry| entry.name == head.name);
-        let disabled = plan.disables.iter().any(|name| name == &head.name);
-        Self {
-            // Disable wins outright; otherwise an explicit enable forces the
-            // head on, and unmentioned heads keep whatever they had.
-            enabled: !disabled && (enable_entry.is_some() || head.enabled),
-            // Plan-supplied mode/position override the live values
-            // absent fields fall back to what the compositor reported.
-            mode: enable_entry.and_then(|entry| entry.mode).or(head.mode),
-            position: enable_entry
-                .and_then(|entry| entry.position)
-                .or(head.position),
-            color_mode: enable_entry.and_then(|entry| entry.color_mode),
-            scale: enable_entry.and_then(|entry| entry.scale).or(head.scale),
-            transform: enable_entry
-                .and_then(|entry| entry.transform)
-                .or(head.transform),
-        }
     }
 }
 
@@ -722,7 +679,6 @@ impl Dispatch<KdeOutputConfigurationV2, ()> for State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compositor::EnableOutput;
 
     #[test]
     fn removed_device_drops_only_its_heads_and_modes() {
@@ -744,18 +700,6 @@ mod tests {
         assert_eq!(state.live_heads().len(), 1);
         assert_eq!(state.live_heads()[0].name, "DP-2");
         assert_eq!(state.modes.keys().copied().collect::<Vec<_>>(), [12]);
-    }
-
-    fn head(name: &str, enabled: bool) -> HeadState {
-        HeadState {
-            name: name.into(),
-            enabled,
-            mode: None,
-            position: None,
-            scale: None,
-            transform: None,
-            color_mode: None,
-        }
     }
 
     // No Wayland socket should be a soft miss (Ok(None)), not an error,
@@ -785,66 +729,8 @@ mod tests {
         }
     }
 
-    // Three resolution rules in `Target::for_head`:
-    //   disable beats carry,
-    //   unmentioned heads carry their current state,
-    //   explicit enable overrides a head that's currently off.
     #[test]
-    fn plan_policy_resolves_targets() {
-        let mode = ModeInfo {
-            width: 1920,
-            height: 1080,
-            refresh_mhz: 60_000,
-        };
-
-        // Two real heads on, one virtual head off.
-        let mut primary = head("DP-1", true);
-        primary.mode = Some(mode);
-        primary.position = Some((0, 0));
-        let mut secondary = head("DP-2", true);
-        secondary.mode = Some(mode);
-        secondary.position = Some((1920, 0));
-        let live = [primary.clone(), secondary.clone(), head("fauxput-0", false)];
-
-        // disable DP-1, enable fauxput-0, leave DP-2 unmentioned.
-        let plan = OutputPlan::builder()
-            .disable("DP-1")
-            .unwrap()
-            .enable(EnableOutput {
-                name: "fauxput-0".into(),
-                mode: Some(mode),
-                position: Some((100, 0)),
-                color_mode: None,
-                ..Default::default()
-            })
-            .unwrap()
-            .set_primary("DP-2")
-            .unwrap()
-            .build();
-
-        // DP-1: disable wins over current-on.
-        let target_primary = Target::for_head(&primary, &plan);
-        assert!(!target_primary.enabled, "disable should win over carry");
-
-        // DP-2: unmentioned, keep current state.
-        let target_secondary = Target::for_head(&secondary, &plan);
-        assert!(
-            target_secondary.enabled,
-            "unmentioned enabled head should carry"
-        );
-        assert_eq!(target_secondary.mode, secondary.mode);
-        assert_eq!(target_secondary.position, secondary.position);
-
-        // fauxput-0: explicit enable wins over current-off, plan's
-        // mode/position replace the head's defaults.
-        let target_virtual = Target::for_head(&live[2], &plan);
-        assert!(
-            target_virtual.enabled,
-            "explicit enable should override current disabled state"
-        );
-        assert_eq!(target_virtual.mode, Some(mode));
-        assert_eq!(target_virtual.position, Some((100, 0)));
-
+    fn color_changes_follow_requested_mode() {
         for (hdr, wcg, color_mode, expected) in [
             (Some(false), Some(true), ColorMode::Sdr, (None, Some(false))),
             (Some(false), Some(true), ColorMode::Hdr, (Some(true), None)),
