@@ -6,9 +6,10 @@ pub mod gnome;
 #[cfg(feature = "kde")]
 pub mod kde;
 
-#[cfg(feature = "kde")]
+#[cfg(any(feature = "kde", feature = "wlr"))]
 pub mod wayland;
 
+#[cfg(feature = "wlr")]
 pub mod wlr;
 
 use std::collections::HashSet;
@@ -167,11 +168,13 @@ pub struct ModeInfo {
 /// Intermediate mode-tracking record shared by both wayland adapters.
 /// Generic over the per-protocol mode proxy type. `info` defaults to
 /// all-zeros and is filled in by Width/Height/Refresh events.
+#[cfg(any(feature = "kde", feature = "wlr"))]
 pub(crate) struct OutputMode<P> {
     pub proxy: Option<P>,
     pub info: ModeInfo,
 }
 
+#[cfg(any(feature = "kde", feature = "wlr"))]
 impl<P> Default for OutputMode<P> {
     fn default() -> Self {
         Self {
@@ -279,6 +282,7 @@ impl OutputPlan {
             .collect()
     }
 
+    #[cfg(any(feature = "kde", feature = "gnome", test))]
     pub(crate) fn primary(&self) -> Option<&str> {
         self.features
             .iter()

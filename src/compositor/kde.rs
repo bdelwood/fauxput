@@ -95,14 +95,12 @@ impl KdeCompositor {
         self.session.state.apply_result = ApplyResult::Pending;
         self.session.state.pending_failure_reason = None;
         cfg.apply();
-        self.session.flush(ctx)?;
 
         // Poll for a non-pending result, bailing early if the manager
         // global disappears mid-wait.
         let result =
             self.session
                 .poll_until(format!("kde apply ({ctx})"), APPLY_TIMEOUT, |session| {
-                    session.roundtrip(ctx)?;
                     // probably overly defensive, but things happen
                     if !session.state.manager_alive {
                         return Err(CompositorError::CompositorWentAway.into());
