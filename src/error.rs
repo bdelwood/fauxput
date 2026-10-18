@@ -20,6 +20,16 @@ pub enum Error {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("failed to read directory {path}: {source}")]
+    ReadDir {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("no DRM connectors found at {path}")]
+    MissingConnectors { path: PathBuf },
+
     /// EDID build failure; inner type carries the offending field.
     #[error(transparent)]
     Edid(#[from] crate::edid::EdidError),

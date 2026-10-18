@@ -88,6 +88,35 @@ impl<P: AsRef<Path>> DirChildren for P {
     }
 }
 
+fn read_entries(path: &Path) -> Result<Vec<fs::DirEntry>> {
+    fs::read_dir(path)
+        .and_then(|entries| entries.collect())
+        .map_err(|source| Error::ReadDir {
+            path: path.into(),
+            source,
+        })
+}
+
+fn drm_connector_names(drm: &Path) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    for card in read_entries(drm)? {
+        let prefix = format!("{}-", card.file_name().to_string_lossy());
+        for connector in read_entries(&card.path())? {
+            if let Some(name) = connector
+                .file_name()
+                .to_string_lossy()
+                .strip_prefix(&prefix)
+            {
+                names.push(name.to_string());
+            }
+        }
+    }
+    if names.is_empty() {
+        return Err(Error::MissingConnectors { path: drm.into() });
+    }
+    Ok(names)
+}
+
 pub struct ConfigfsVkms {
     root: PathBuf,
 }
@@ -439,32 +468,26 @@ impl DisplayBackend for ConfigfsVkms {
         self.remove(&handle.local_id)
     }
 
-    fn disconnect(&self, handle: &DisplayHandle) -> Result<Vec<String>> {
-        let mut names = Vec::new();
+    fn connector_names(&self, handle: &DisplayHandle) -> Result<Vec<String>> {
+        let inst = self.root.join(&handle.local_id);
+        if !inst.try_exists()? || fs::read_to_string(inst.join("enabled"))?.trim() == "0" {
+            return Ok(Vec::new());
+        }
         let drm = Path::new("/sys/devices/faux")
             .join(&handle.local_id)
             .join("drm");
-        for card in drm.entries() {
-            let prefix = format!("{}-", card.file_name().to_string_lossy());
-            for connector in card.path().entries() {
-                if let Some(name) = connector
-                    .file_name()
-                    .to_string_lossy()
-                    .strip_prefix(&prefix)
-                {
-                    names.push(name.to_string());
-                }
-            }
+        drm_connector_names(&drm)
+    }
+
+    fn disconnect(&self, handle: &DisplayHandle) -> Result<()> {
+        let inst = self.root.join(&handle.local_id);
+        if !inst.try_exists()? {
+            return Ok(());
         }
-        for entry in self
-            .root
-            .join(&handle.local_id)
-            .join("connectors")
-            .entries()
-        {
+        for entry in read_entries(&inst.join("connectors"))? {
             self.set(&entry.path().join("status"), Payload::ConnectorDisconnected)?;
         }
-        Ok(names)
+        Ok(())
     }
 
     // list all instances by walking tree
@@ -575,8 +598,37 @@ mod tests {
     #[test]
     fn remove_is_idempotent_when_already_gone() {
         let (_dir, b) = sandbox();
+        let handle = DisplayHandle {
+            backend_id: BACKEND_ID.into(),
+            local_id: "fauxput-0".into(),
+        };
+        assert!(b.connector_names(&handle).unwrap().is_empty());
+        b.disconnect(&handle).unwrap();
         b.remove("fauxput-0")
             .expect("destroy of missing instance must succeed (no-op)");
+    }
+
+    #[test]
+    fn connector_lookup_propagates_directory_errors() {
+        let dir = TempDir::new().unwrap();
+        let drm = dir.path().join("drm");
+        assert!(matches!(
+            drm_connector_names(&drm),
+            Err(Error::ReadDir { .. })
+        ));
+        fs::create_dir(&drm).unwrap();
+        assert!(matches!(
+            drm_connector_names(&drm),
+            Err(Error::MissingConnectors { .. })
+        ));
+        fs::create_dir_all(drm.join("card1/card1-DP-2")).unwrap();
+        fs::write(drm.join("card1/uevent"), "").unwrap();
+        assert_eq!(drm_connector_names(&drm).unwrap(), ["DP-2"]);
+        fs::write(drm.join("card2"), "").unwrap();
+        assert!(matches!(
+            drm_connector_names(&drm),
+            Err(Error::ReadDir { .. })
+        ));
     }
 
     #[test]

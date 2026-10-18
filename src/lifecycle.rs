@@ -268,22 +268,30 @@ impl<'a> Up<'a> {
     pub fn place_new_head(&mut self, handle: &DisplayHandle) -> Result<(String, (i32, i32))> {
         let comp = self.compositor.as_mut().expect("compositor must be Some");
 
-        // Anything not in the pre-create snapshot must be the head we just
-        // created; this filters out the existing real outputs.
-        let baseline_names: HashSet<String> = self
+        let expected = self.backend.connector_names(handle)?;
+        if self
             .pre_create
             .heads
             .iter()
-            .map(|h| h.name.clone())
-            .collect();
-        let new_head =
-            comp.wait_for_outputs(HEAD_APPEAR_TIMEOUT, "new output to appear", |snapshot| {
-                snapshot
+            .any(|head| expected.contains(&head.name))
+        {
+            return Err(crate::compositor::CompositorError::ApplyRejected {
+                reason: "new device shares a connector name with an existing output",
+            }
+            .into());
+        }
+        let new_head = comp.wait_for_outputs(
+            HEAD_APPEAR_TIMEOUT,
+            &format!("device connectors {expected:?} to appear unambiguously"),
+            |snapshot| {
+                let mut matches = snapshot
                     .heads
                     .iter()
-                    .find(|head| !baseline_names.contains(&head.name))
-                    .cloned()
-            })?;
+                    .filter(|head| expected.contains(&head.name));
+                let head = matches.next()?;
+                matches.next().is_none().then(|| head.clone())
+            },
+        )?;
         let head_name = new_head.name.clone();
         self.attached_head_name = Some(head_name.clone());
         self.store.update_instance(&handle.local_id, |rec| {
@@ -432,7 +440,10 @@ fn disconnect_outputs(
 ) -> Result<()> {
     let mut names = HashSet::new();
     for handle in handles {
-        names.extend(backend.disconnect(handle)?);
+        names.extend(backend.connector_names(handle)?);
+    }
+    for handle in handles {
+        backend.disconnect(handle)?;
     }
     let Some(comp) = compositor.as_mut().filter(|_| !names.is_empty()) else {
         return Ok(());
