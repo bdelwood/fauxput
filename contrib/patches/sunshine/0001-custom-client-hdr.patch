@@ -1,0 +1,216 @@
+From 2e319f7fabf56d0a330db4ff6f076f8479eb805f Mon Sep 17 00:00:00 2001
+From: Brodi Elwood <brodielwood@gmail.com>
+Date: Mon, 14 Sep 2026 01:13:11 -0400
+Subject: [PATCH] Negotiate client SDR and HDR colors explicitly for every
+ PipeWire format
+
+Source-Commit: c84685b7212539911fd14eea4d8bbcb77f9dee13
+Target-Version: Sunshine v2026.914.233613
+---
+ src/platform/linux/pipewire.cpp               | 23 ++++----
+ src/platform/linux/pipewire_hdr.h             | 52 +++++++++++++++++++
+ .../unit/platform/linux/test_pipewire_hdr.cpp | 37 +++++++++++++
+ 3 files changed, 102 insertions(+), 10 deletions(-)
+ create mode 100644 src/platform/linux/pipewire_hdr.h
+ create mode 100644 tests/unit/platform/linux/test_pipewire_hdr.cpp
+
+diff --git a/src/platform/linux/pipewire.cpp b/src/platform/linux/pipewire.cpp
+index 6cfb0a0f07a5013a19086e195618cf9d0981e325..4b8b7fe1e9842426e09b5a68cafd168fb81a5d49 100644
+--- a/src/platform/linux/pipewire.cpp
++++ b/src/platform/linux/pipewire.cpp
+@@ -17,6 +17,7 @@
+ // local includes
+ #include "cuda.h"
+ #include "graphics.h"
++#include "pipewire_hdr.h"
+ #include "src/main.h"
+ #include "src/platform/common.h"
+ #include "src/video.h"
+@@ -311,9 +312,10 @@ namespace pipewire {
+      * @param dmabuf_infos Dmabuf infos.
+      * @param n_dmabuf_infos N dmabuf infos.
+      * @param display_is_nvidia Display is nvidia.
++     * @param want_hdr Whether this connection requested HDR color tags.
+      * @return 0 when the PipeWire stream is configured; nonzero on negotiation failure.
+      */
+-    int ensure_stream(const platf::mem_type_e mem_type, const uint32_t width, const uint32_t height, const AVRational target_framerate, const struct dmabuf_format_info_t *dmabuf_infos, const int n_dmabuf_infos, const bool display_is_nvidia) {
++    int ensure_stream(const platf::mem_type_e mem_type, const uint32_t width, const uint32_t height, const AVRational target_framerate, const struct dmabuf_format_info_t *dmabuf_infos, const int n_dmabuf_infos, const bool display_is_nvidia, const bool want_hdr) {
+       pw_thread_loop_lock(loop);
+       int result = 0;
+       if (!stream_data.stream) {
+@@ -344,7 +346,7 @@ namespace pipewire {
+                                                  (mem_type == platf::mem_type_e::cuda && display_is_nvidia));
+         if (use_dmabuf) {
+           for (int i = 0; i < n_dmabuf_infos; i++) {
+-            auto format_param = build_format_parameter(&pod_builder, width, height, target_framerate, dmabuf_infos[i].format, dmabuf_infos[i].modifiers, dmabuf_infos[i].n_modifiers);
++            auto format_param = build_format_parameter(&pod_builder, width, height, target_framerate, dmabuf_infos[i].format, dmabuf_infos[i].modifiers, dmabuf_infos[i].n_modifiers, want_hdr);
+             params[n_params] = format_param;
+             n_params++;
+           }
+@@ -352,7 +354,7 @@ namespace pipewire {
+ 
+         // Add fallback for memptr
+         for (const auto &fmt : format_map) {
+-          auto format_param = build_format_parameter(&pod_builder, width, height, target_framerate, fmt.pw_format, nullptr, 0);
++          auto format_param = build_format_parameter(&pod_builder, width, height, target_framerate, fmt.pw_format, nullptr, 0, want_hdr);
+           params[n_params] = format_param;
+           n_params++;
+         }
+@@ -501,7 +503,7 @@ namespace pipewire {
+     uint64_t object_serial;
+     bool negotiate_maxframerate_ = true;
+ 
+-    struct spa_pod *build_format_parameter(struct spa_pod_builder *b, uint32_t width, uint32_t height, AVRational target_framerate, int32_t format, uint64_t *modifiers, int n_modifiers) {
++    struct spa_pod *build_format_parameter(struct spa_pod_builder *b, uint32_t width, uint32_t height, AVRational target_framerate, int32_t format, uint64_t *modifiers, int n_modifiers, bool want_hdr) {
+       struct spa_pod_frame object_frame;
+       struct spa_pod_frame modifier_frame;
+       std::array<struct spa_rectangle, 3> sizes;
+@@ -529,10 +531,9 @@ namespace pipewire {
+         spa_pod_builder_add(b, SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerates[0]), 0);
+       }
+ 
+-      if (format == SPA_VIDEO_FORMAT_xBGR_210LE) {
+-        spa_pod_builder_add(b, SPA_FORMAT_VIDEO_colorPrimaries, SPA_POD_Id(SPA_VIDEO_COLOR_PRIMARIES_BT2020), 0);
+-        spa_pod_builder_add(b, SPA_FORMAT_VIDEO_transferFunction, SPA_POD_Id(SPA_VIDEO_TRANSFER_SMPTE2084), 0);
+-      }
++      // Explicitly negotiate SDR too: ten-bit buffers do not imply HDR,
++      // and producer defaults must not decide this on the client's behalf.
++      add_capture_color_tags(b, format, want_hdr);
+ 
+       if (n_modifiers) {
+         spa_pod_builder_prop(b, SPA_FORMAT_VIDEO_modifier, SPA_POD_PROP_FLAG_MANDATORY | SPA_POD_PROP_FLAG_DONT_FIXATE);
+@@ -864,6 +865,7 @@ namespace pipewire {
+         BOOST_LOG(info) << "[pipewire] Requested frame rate: "sv << fps.num << "fps"sv;
+       }
+       this->target_framerate = fps;
++      want_hdr = config.dynamicRange != 0;
+       mem_type = hwdevice_type;
+ 
+       if (get_dmabuf_modifiers() < 0) {
+@@ -899,7 +901,7 @@ namespace pipewire {
+       }
+ 
+       // Start PipeWire now so format negotiation can proceed before capture start
+-      if (pipewire.ensure_stream(mem_type, width, height, target_framerate, dmabuf_infos.data(), n_dmabuf_infos, display_is_nvidia) < 0) {
++      if (pipewire.ensure_stream(mem_type, width, height, target_framerate, dmabuf_infos.data(), n_dmabuf_infos, display_is_nvidia, want_hdr) < 0) {
+         BOOST_LOG(error) << "[pipewire] Failed to ensure pipewire stream. pipewire_t::init() failed.";
+         return -1;
+       }
+@@ -1011,7 +1013,7 @@ namespace pipewire {
+     platf::capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
+       auto next_frame = std::chrono::steady_clock::now();
+ 
+-      if (pipewire.ensure_stream(mem_type, width, height, target_framerate, dmabuf_infos.data(), n_dmabuf_infos, display_is_nvidia) < 0) {
++      if (pipewire.ensure_stream(mem_type, width, height, target_framerate, dmabuf_infos.data(), n_dmabuf_infos, display_is_nvidia, want_hdr) < 0) {
+         BOOST_LOG(error) << "[pipewire] Failed to ensure pipewire stream. capture() failed with error.";
+         return platf::capture_e::error;
+       }
+@@ -1400,6 +1402,7 @@ namespace pipewire {
+     std::array<struct dmabuf_format_info_t, MAX_DMABUF_FORMATS> dmabuf_infos;
+     int n_dmabuf_infos;
+     bool display_is_nvidia = false;  // Track if display GPU is NVIDIA
++    bool want_hdr = false;  ///< Per-connection HDR request, independent of buffer bit depth.
+     std::chrono::nanoseconds delay;
+     std::optional<std::uint64_t> last_pts {};
+     std::optional<std::uint64_t> last_seq {};
+diff --git a/src/platform/linux/pipewire_hdr.h b/src/platform/linux/pipewire_hdr.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..be44530bd9a348dd23c735d73c0fb4021b26a9a3
+--- /dev/null
++++ b/src/platform/linux/pipewire_hdr.h
+@@ -0,0 +1,52 @@
++/**
++ * @file src/platform/linux/pipewire_hdr.h
++ * @brief Per-client HDR color-tag policy for PipeWire format negotiation.
++ */
++#pragma once
++
++// lib includes
++#include <pipewire/version.h>
++#include <spa/param/video/format-utils.h>
++#include <spa/pod/builder.h>
++
++namespace pipewire {
++  /**
++   * @brief Select explicit SDR or HDR color tags independently of buffer bit depth.
++   * @param format PipeWire video format being advertised.
++   * @param want_hdr Whether the streaming client requested HDR.
++   * @return Requested primaries and transfer function for this format.
++   */
++  constexpr auto capture_color_tags(int format, bool want_hdr) {
++    struct color_tags_t {
++      spa_video_color_primaries primaries;  ///< Requested color primaries.
++      spa_video_transfer_function transfer;  ///< Requested transfer function.
++    };
++
++    const bool ten_bit = format == SPA_VIDEO_FORMAT_xBGR_210LE ||
++                         format == SPA_VIDEO_FORMAT_ARGB_210LE ||
++                         format == SPA_VIDEO_FORMAT_ABGR_210LE ||
++                         format == SPA_VIDEO_FORMAT_RGBA_102LE ||
++                         format == SPA_VIDEO_FORMAT_BGRA_102LE;
++#if PW_CHECK_VERSION(1, 6, 0)
++    constexpr auto pq = SPA_VIDEO_TRANSFER_SMPTE2084;
++#else
++    // PipeWire's stable wire value predates the public enum name.
++    constexpr auto pq = static_cast<spa_video_transfer_function>(14);
++#endif
++    return want_hdr && ten_bit ?
++             color_tags_t {SPA_VIDEO_COLOR_PRIMARIES_BT2020, pq} :
++             color_tags_t {SPA_VIDEO_COLOR_PRIMARIES_BT709, SPA_VIDEO_TRANSFER_GAMMA22};
++  }
++
++  /**
++   * @brief Add the explicit color choice to the actual PipeWire format offer.
++   * @param builder Builder positioned inside a video format object.
++   * @param format PipeWire video format being advertised.
++   * @param want_hdr Whether the streaming client requested HDR.
++   */
++  inline void add_capture_color_tags(spa_pod_builder *builder, int format, bool want_hdr) {
++    const auto tags = capture_color_tags(format, want_hdr);
++    spa_pod_builder_add(builder, SPA_FORMAT_VIDEO_colorPrimaries, SPA_POD_Id(tags.primaries), 0);
++    spa_pod_builder_add(builder, SPA_FORMAT_VIDEO_transferFunction, SPA_POD_Id(tags.transfer), 0);
++  }
++}  // namespace pipewire
+diff --git a/tests/unit/platform/linux/test_pipewire_hdr.cpp b/tests/unit/platform/linux/test_pipewire_hdr.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..ccb4d05ed8687ae4b034377a521384c569a63a01
+--- /dev/null
++++ b/tests/unit/platform/linux/test_pipewire_hdr.cpp
+@@ -0,0 +1,37 @@
++/**
++ * @file tests/unit/platform/linux/test_pipewire_hdr.cpp
++ * @brief Regression tests for per-client PipeWire HDR color tags.
++ */
++#if defined(SUNSHINE_BUILD_KWIN) || defined(SUNSHINE_BUILD_PORTAL)
++  // test includes
++  #include "../../../tests_common.h"
++
++  // local includes
++  #include "src/platform/linux/pipewire_hdr.h"
++
++TEST(PipeWireHdr, EverySupportedFormatExplicitlyNegotiatesClientColorTags) {
++  const int formats[] = {SPA_VIDEO_FORMAT_xBGR_210LE, SPA_VIDEO_FORMAT_ARGB_210LE, SPA_VIDEO_FORMAT_ABGR_210LE, SPA_VIDEO_FORMAT_RGBA_102LE, SPA_VIDEO_FORMAT_BGRA_102LE, SPA_VIDEO_FORMAT_BGRA, SPA_VIDEO_FORMAT_BGRx};
++  for (const auto format : formats) {
++    for (const bool hdr : {false, true}) {
++      SCOPED_TRACE(::testing::Message() << "format=" << format << " hdr=" << hdr);
++      const bool expect_hdr = hdr && format != SPA_VIDEO_FORMAT_BGRA && format != SPA_VIDEO_FORMAT_BGRx;
++      const auto tags = pipewire::capture_color_tags(format, hdr);
++      EXPECT_EQ(tags.primaries, expect_hdr ? SPA_VIDEO_COLOR_PRIMARIES_BT2020 : SPA_VIDEO_COLOR_PRIMARIES_BT709);
++      EXPECT_EQ(static_cast<int>(tags.transfer), expect_hdr ? 14 : SPA_VIDEO_TRANSFER_GAMMA22);
++
++      // Parse the same builder output used in real format offers, not just the policy helper.
++      uint8_t buffer[256] {};
++      spa_pod_builder builder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
++      spa_pod_frame frame;
++      spa_pod_builder_push_object(&builder, &frame, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat);
++      spa_pod_builder_add(&builder, SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video), SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw), SPA_FORMAT_VIDEO_format, SPA_POD_Id(format), 0);
++      pipewire::add_capture_color_tags(&builder, format, hdr);
++      const auto pod = static_cast<spa_pod *>(spa_pod_builder_pop(&builder, &frame));
++      spa_video_info_raw parsed {};
++      ASSERT_GE(spa_format_video_raw_parse(pod, &parsed), 0);
++      EXPECT_EQ(parsed.color_primaries, tags.primaries);
++      EXPECT_EQ(parsed.transfer_function, tags.transfer);
++    }
++  }
++}
++#endif

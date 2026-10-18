@@ -1,0 +1,27 @@
+From 4c1a0f04f9a5eeead8b1dc020b1e58521ad87722 Mon Sep 17 00:00:00 2001
+From: Brodi Elwood <brodielwood@gmail.com>
+Date: Sat, 17 Oct 2026 16:30:10 -0400
+Subject: [PATCH] plugins/screencast: restore DMA-BUF support after successful
+ format fallback
+
+Source-Commit: 69bb08ac117b3c92be3e1a350953f560997e2075
+Target-Version: KWin v6.8.0 with rebased upstream HDR MRs
+---
+ src/plugins/screencast/screencaststream.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/plugins/screencast/screencaststream.cpp b/src/plugins/screencast/screencaststream.cpp
+index d2997f08a6e1be6e4f35b7a1ede0279431686922..e55e36b213c52814853a37f5a7f419ca5f3fc594 100644
+--- a/src/plugins/screencast/screencaststream.cpp
++++ b/src/plugins/screencast/screencaststream.cpp
+@@ -374,6 +374,10 @@ void ScreenCastStream::onStreamParamChanged(uint32_t id, const struct spa_pod *f
+                 const auto opt = testCreateDmaBuf(m_source->renderDevice(), m_resolution, drmFormat, mods);
+                 if (opt.has_value()) {
+                     m_dmabufParams = opt;
++                    // The initial preferred format may have failed its probe.
++                    // Advertise DMA-BUFs again when a fallback format succeeds,
++                    // matching the buffer type selected by newStreamParams().
++                    m_hasDmaBuf = true;
+                     m_drmFormat = drmFormat;
+                     m_modifiers = mods;
+ 

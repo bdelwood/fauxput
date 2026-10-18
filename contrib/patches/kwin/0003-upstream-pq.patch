@@ -1,0 +1,71 @@
+From 1e9ae851ef79c012a6ca7a0ba2f989c03f671d9f Mon Sep 17 00:00:00 2001
+From: Xaver Hugl <xaver.hugl@kde.org>
+Date: Wed, 22 Oct 2025 19:58:24 +0200
+Subject: [PATCH] plugins/screencast: add support for the PQ transfer function
+
+Guarded behind ifdefs, because Pipewire only added it in the last release
+(Pipewire 1.5.81).
+
+Upstream-MR: https://invent.kde.org/plasma/kwin/-/merge_requests/8293
+Upstream-Commit: a4263b117cd17c6107c8406c281c0fe70e0dceab
+Target-Version: KWin v6.8.0
+
+---
+ CMakeLists.txt                              | 5 +++++
+ src/config-kwin.h.cmake                     | 1 +
+ src/plugins/screencast/screencaststream.cpp | 8 ++++++++
+ 3 files changed, 14 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4090a5777977b74da8b022227e3028240c41d4af..1fc5f401d0b0555d0fa4931c0041b09131eb3b02 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -381,6 +381,11 @@ add_feature_info(libdisplayinfo libdisplayinfo_FOUND "EDID and DisplayID library
+ 
+ pkg_check_modules(PipeWire IMPORTED_TARGET libpipewire-0.3>=1.4.0)
+ add_feature_info(PipeWire PipeWire_FOUND "Required for Wayland screencasting")
++if (${PipeWire_VERSION} VERSION_GREATER_EQUAL 1.5.81)
++    set(HAVE_PIPEWIRE_ST2084 1)
++else()
++    set(HAVE_PIPEWIRE_ST2084 0)
++endif()
+ 
+ if (KWIN_BUILD_NOTIFICATIONS)
+     find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS Notifications)
+diff --git a/src/config-kwin.h.cmake b/src/config-kwin.h.cmake
+index 3649b2f97387e95e83b3e2d4016a59963c7a1185..bbffe2aafc9621650b6b3fab3a8b0d1ad8cb2429 100644
+--- a/src/config-kwin.h.cmake
++++ b/src/config-kwin.h.cmake
+@@ -31,5 +31,6 @@ constexpr QLatin1StringView LIBEXEC_DIR("${CMAKE_INSTALL_FULL_LIBEXECDIR}");
+ #cmakedefine01 HAVE_DL_LIBRARY
+ #cmakedefine01 HAVE_LIBINPUT_PLUGINS
+ #cmakedefine01 HAVE_SYSTEMD
++#cmakedefine01 HAVE_PIPEWIRE_ST2084
+ 
+ constexpr QLatin1StringView XWAYLAND_SESSION_SCRIPTS("${XWAYLAND_SESSION_SCRIPTS}");
+diff --git a/src/plugins/screencast/screencaststream.cpp b/src/plugins/screencast/screencaststream.cpp
+index 4d2cc376da7124d21684ea26a1a059d1d6c20403..8adabae84fbb328ee8ae5550c07cd947f952b952 100644
+--- a/src/plugins/screencast/screencaststream.cpp
++++ b/src/plugins/screencast/screencaststream.cpp
+@@ -208,6 +208,11 @@ void ScreenCastStream::newStreamParams()
+     case SPA_VIDEO_TRANSFER_BT2020_10:
+         transfer = TransferFunction::BT1886;
+         break;
++#if HAVE_PIPEWIRE_ST2084
++    case SPA_VIDEO_TRANSFER_SMPTE2084:
++        transfer = TransferFunction::PerceptualQuantizer;
++        break;
++#endif
+     case SPA_VIDEO_TRANSFER_GAMMA22:
+     default:
+         break;
+@@ -944,6 +949,9 @@ spa_pod *ScreenCastStream::buildFormat(struct spa_pod_builder *b, enum spa_video
+     spa_pod_builder_push_choice(b, &transferFrame, SPA_CHOICE_Enum, 0);
+     spa_pod_builder_id(b, SPA_VIDEO_TRANSFER_GAMMA22); // default
+     spa_pod_builder_id(b, SPA_VIDEO_TRANSFER_GAMMA22);
++#if HAVE_PIPEWIRE_ST2084
++    spa_pod_builder_id(b, SPA_VIDEO_TRANSFER_SMPTE2084);
++#endif
+     // SPA_VIDEO_TRANSFER_SRGB is intentionally not supported,
+     // as it would almost certainly yield wrong results.
+     spa_pod_builder_id(b, SPA_VIDEO_TRANSFER_BT709);

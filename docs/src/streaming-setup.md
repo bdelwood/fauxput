@@ -17,6 +17,8 @@ Add an app in Sunshine's web UI (the `Apps` tab) with the fauxput wrappers as `d
 
 The wrappers read `SUNSHINE_CLIENT_WIDTH/HEIGHT/FPS` and call `fauxput up --primary --disable-real-outputs` / `fauxput down`. Set `FAUXPUT_KEEP_REAL=1` in the app's env block to leave host outputs enabled while streaming.
 
+The wrapper also passes `--hdr` when the client requests HDR. See [HDR on Plasma](./plasma-hdr.md) for the KWin and Sunshine requirements.
+
 ## Verify
 
 Connect from Moonlight at a non-host resolution. The stream should render at exactly that resolution; `fauxput status` shows the virtual display while connected and it disappears on disconnect.

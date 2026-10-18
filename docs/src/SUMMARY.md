@@ -6,6 +6,7 @@
 
 - [Kernel dependency: vkms-edid-dkms](./kernel-dependency.md)
 - [Streaming setup](./streaming-setup.md)
+- [HDR on Plasma](./plasma-hdr.md)
 - [Troubleshooting](./troubleshooting.md)
 
 ---

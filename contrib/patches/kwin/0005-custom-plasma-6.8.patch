@@ -1,0 +1,24 @@
+From 50970397b0a6e7e1c1190eaac5c9fe9706983a40 Mon Sep 17 00:00:00 2001
+From: Brodi Elwood <brodielwood@gmail.com>
+Date: Sat, 17 Oct 2026 12:51:27 -0400
+Subject: [PATCH] Adapt HDR format fallback probing to KWin 6.8 render devices
+
+Source-Commit: 381d760aaf5aeb66c8a0dc4e8a46cdaf2392f0de
+Target-Version: KWin v6.8.0 with rebased upstream HDR MRs
+---
+ src/plugins/screencast/screencaststream.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/plugins/screencast/screencaststream.cpp b/src/plugins/screencast/screencaststream.cpp
+index 024f3a9a5bfaf2d44a9c8ba48682aec79a9b2242..d2997f08a6e1be6e4f35b7a1ede0279431686922 100644
+--- a/src/plugins/screencast/screencaststream.cpp
++++ b/src/plugins/screencast/screencaststream.cpp
+@@ -371,7 +371,7 @@ void ScreenCastStream::onStreamParamChanged(uint32_t id, const struct spa_pod *f
+                     continue;
+                 }
+                 const auto mods = supported.value(drmFormat);
+-                const auto opt = testCreateDmaBuf(m_resolution, drmFormat, mods);
++                const auto opt = testCreateDmaBuf(m_source->renderDevice(), m_resolution, drmFormat, mods);
+                 if (opt.has_value()) {
+                     m_dmabufParams = opt;
+                     m_drmFormat = drmFormat;

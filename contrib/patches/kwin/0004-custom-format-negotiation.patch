@@ -1,0 +1,62 @@
+From aad95485ecf087eecb2733201798bf6fa27c8dc9 Mon Sep 17 00:00:00 2001
+From: Brodi Elwood <brodielwood@gmail.com>
+Date: Sun, 17 May 2026 22:14:18 -0400
+Subject: [PATCH] plugins/screencast: fix type confusion between DRM fourcc and
+ SPA video format
+
+When the consumer sends a format choice (SPA_FORMAT_VIDEO_format
+property) in its param update, ScreenCastStream::onStreamParamChanged
+checks whether the current m_drmFormat is still in the offered list:
+
+    std::span<const spa_video_format> values(...);
+    if (reallocationRequired || !std::ranges::contains(values, m_drmFormat)) {
+
+m_drmFormat is a DRM fourcc (e.g. AR24 = 0x34325241) but values are
+spa_video_format enum entries (e.g. BGRA = 12). The two value spaces
+never overlap, so std::ranges::contains is always false, the body is
+always entered, m_drmFormat is 'changed' to the same value the consumer
+already asked for, pw_stream_update_params is called, and pipewire
+fires onStreamParamChanged again with the same format choice. Infinite
+renegotiation; zero frames delivered until the consumer eventually
+times out.
+
+This is reproducible with Sunshine on a hybrid Intel+NVIDIA system
+where CUDA can't import the iGPU's tiled DMA-BUF: pipewire negotiation
+falls through the modifier branch into the format branch, which then
+loops at full CPU speed for several seconds. Setups where the modifier
+branch resolves (Ethan Lee's report in !8293 comment 23, OBS on a
+single-GPU system) never reach this code path and don't notice the
+bug.
+
+Convert each advertised spa_video_format to its DRM fourcc before
+comparing against m_drmFormat.
+
+Source-Commit: 38b534402dc9dd91d7625d6073aae53680cbcfdd
+Target-Version: KWin v6.8.0 with rebased upstream HDR MRs
+---
+ src/plugins/screencast/screencaststream.cpp | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/src/plugins/screencast/screencaststream.cpp b/src/plugins/screencast/screencaststream.cpp
+index 8adabae84fbb328ee8ae5550c07cd947f952b952..024f3a9a5bfaf2d44a9c8ba48682aec79a9b2242 100644
+--- a/src/plugins/screencast/screencaststream.cpp
++++ b/src/plugins/screencast/screencaststream.cpp
+@@ -349,7 +349,17 @@ void ScreenCastStream::onStreamParamChanged(uint32_t id, const struct spa_pod *f
+         }
+     } else if (auto formatProperty = spa_pod_find_prop(format, nullptr, SPA_FORMAT_VIDEO_format)) {
+         std::span<const spa_video_format> values((spa_video_format *)SPA_POD_CHOICE_VALUES(&formatProperty->value), SPA_POD_CHOICE_N_VALUES(&formatProperty->value));
+-        if (reallocationRequired || !std::ranges::contains(values, m_drmFormat)) {
++        // m_drmFormat is a DRM fourcc (e.g. AR24=0x34325241); values are
++        // spa_video_format enum entries (e.g. BGRA=12). Comparing the two
++        // directly never matches, so the body would always be entered and
++        // m_drmFormat would be "changed" to the same value on every
++        // callback — an infinite renegotiation loop with consumers that
++        // send a format choice in their param. Convert each spa entry to
++        // its DRM fourcc first.
++        const bool currentFormatStillOffered = std::ranges::any_of(values, [this](spa_video_format spaFormat) {
++            return spaVideoFormatToDrmFormat(spaFormat) == m_drmFormat;
++        });
++        if (reallocationRequired || !currentFormatStillOffered) {
+             // attempt to change the format to something the client supports
+             const auto supported = Compositor::self()->backend()->supportedFormats();
+             for (spa_video_format spaFormat : values) {

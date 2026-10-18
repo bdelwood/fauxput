@@ -1,0 +1,314 @@
+From df2766a50693069a237d03b509cf81b5660aa6b9 Mon Sep 17 00:00:00 2001
+From: Xaver Hugl <xaver.hugl@kde.org>
+Date: Wed, 22 Oct 2025 19:38:27 +0200
+Subject: [PATCH] plugins/screencast: add support for non-sRGB streams
+
+Basically we announce all primaries and transfer functions we support to the
+client, the client does the same, and Pipewire picks the intersection.
+
+Upstream-MR: https://invent.kde.org/plasma/kwin/-/merge_requests/8293
+Upstream-Commit: 3c1f2b662a6d740933f91461bae992ed7e28d5cd
+Target-Version: KWin v6.8.0
+
+---
+ .../screencast/outputscreencastsource.cpp     |  6 ++
+ .../screencast/outputscreencastsource.h       |  1 +
+ .../screencast/regionscreencastsource.cpp     |  6 ++
+ .../screencast/regionscreencastsource.h       |  1 +
+ src/plugins/screencast/screencastlayer.cpp    | 11 ++-
+ src/plugins/screencast/screencastlayer.h      |  2 +
+ src/plugins/screencast/screencastsource.h     |  2 +
+ src/plugins/screencast/screencaststream.cpp   | 71 +++++++++++++++++++
+ src/plugins/screencast/screencaststream.h     |  2 +
+ .../screencast/windowscreencastsource.cpp     |  7 +-
+ .../screencast/windowscreencastsource.h       |  2 +
+ 11 files changed, 109 insertions(+), 2 deletions(-)
+
+diff --git a/src/plugins/screencast/outputscreencastsource.cpp b/src/plugins/screencast/outputscreencastsource.cpp
+index 38aa7e7b86c5365f865c68827a38dca9d7d7c3e4..b26a87e0b8538415c3887fb4190a7ab6617f250a 100644
+--- a/src/plugins/screencast/outputscreencastsource.cpp
++++ b/src/plugins/screencast/outputscreencastsource.cpp
+@@ -70,6 +70,12 @@ void OutputScreenCastSource::setNextPresentationTimestamp(std::chrono::nanosecon
+     m_sceneView->setNextPresentationTimestamp(timestamp, refreshRate);
+ }
+ 
++void OutputScreenCastSource::setColorDescription(const std::shared_ptr<ColorDescription> &color)
++{
++    Q_ASSERT(m_layer);
++    m_layer->setColorDescription(color);
++}
++
+ Region OutputScreenCastSource::render(QImage *target, const Region &bufferRepair)
+ {
+     auto texture = GLTexture::allocate(GL_RGBA8, target->size());
+diff --git a/src/plugins/screencast/outputscreencastsource.h b/src/plugins/screencast/outputscreencastsource.h
+index 73f15353c8cb795c676f0401cb2395a554b8dc37..ba372b3f10c804c0a7ab3af3802faf7b58e4c1e7 100644
+--- a/src/plugins/screencast/outputscreencastsource.h
++++ b/src/plugins/screencast/outputscreencastsource.h
+@@ -33,6 +33,7 @@ public:
+ 
+     void setRenderCursor(bool enable) override;
+     void setNextPresentationTimestamp(std::chrono::nanoseconds timestamp, uint32_t refreshRate) override;
++    void setColorDescription(const std::shared_ptr<ColorDescription> &color) override;
+     Region render(GLFramebuffer *target, const Region &bufferRepair) override;
+     Region render(QImage *target, const Region &bufferRepair) override;
+ 
+diff --git a/src/plugins/screencast/regionscreencastsource.cpp b/src/plugins/screencast/regionscreencastsource.cpp
+index 0cdf44d7ca72e0fbc472871247f70ae1453992a1..46cec6c43a6b193207c4da87a1d6a83519f005a1 100644
+--- a/src/plugins/screencast/regionscreencastsource.cpp
++++ b/src/plugins/screencast/regionscreencastsource.cpp
+@@ -190,6 +190,12 @@ RectF RegionScreenCastSource::mapFromGlobal(const RectF &rect) const
+     return rect.translated(-m_region.topLeft());
+ }
+ 
++void RegionScreenCastSource::setColorDescription(const std::shared_ptr<ColorDescription> &color)
++{
++    Q_ASSERT(m_layer);
++    m_layer->setColorDescription(color);
++}
++
+ } // namespace KWin
+ 
+ #include "moc_regionscreencastsource.cpp"
+diff --git a/src/plugins/screencast/regionscreencastsource.h b/src/plugins/screencast/regionscreencastsource.h
+index cc774c700162e0ed75d5fff989a6053ff26fc167..fe379752b893d9d11d851009f0ff08846740ea5e 100644
+--- a/src/plugins/screencast/regionscreencastsource.h
++++ b/src/plugins/screencast/regionscreencastsource.h
+@@ -32,6 +32,7 @@ public:
+ 
+     void setRenderCursor(bool enable) override;
+     void setNextPresentationTimestamp(std::chrono::nanoseconds timestamp, uint32_t refreshRate) override;
++    void setColorDescription(const std::shared_ptr<ColorDescription> &color) override;
+     Region render(GLFramebuffer *target, const Region &bufferRepair) override;
+     Region render(QImage *target, const Region &bufferRepair) override;
+ 
+diff --git a/src/plugins/screencast/screencastlayer.cpp b/src/plugins/screencast/screencastlayer.cpp
+index 7b2187fedd2fca1d3e80a6ee5b23a10487e56579..df631b960408b65c5a14f68fa3167143104a4a23 100644
+--- a/src/plugins/screencast/screencastlayer.cpp
++++ b/src/plugins/screencast/screencastlayer.cpp
+@@ -18,6 +18,15 @@ ScreencastLayer::ScreencastLayer(LogicalOutput *output, const FormatModifierMap
+     setRenderLoop(nullptr);
+ }
+ 
++void ScreencastLayer::setColorDescription(const std::shared_ptr<ColorDescription> &color)
++{
++    if (color == m_color) {
++        return;
++    }
++    m_color = color;
++    addDeviceRepaint(Rect(QPoint(), m_targetRect.size()));
++}
++
+ void ScreencastLayer::setFramebuffer(GLFramebuffer *buffer, const Region &bufferDamage)
+ {
+     // TODO is there a better way to deal with this?
+@@ -39,7 +48,7 @@ std::optional<OutputLayerBeginFrameInfo> ScreencastLayer::beginFrame(OutputFrame
+     }
+ 
+     return OutputLayerBeginFrameInfo{
+-        .renderTarget = RenderTarget(m_buffer),
++        .renderTarget = RenderTarget(m_buffer, m_color),
+         .repaint = m_bufferDamage,
+     };
+ }
+diff --git a/src/plugins/screencast/screencastlayer.h b/src/plugins/screencast/screencastlayer.h
+index fb8cfdabead98182ab438a97e0e8d6f4f3b2a678..4bd004d9f1a740666dc86db476de74d1276dd97b 100644
+--- a/src/plugins/screencast/screencastlayer.h
++++ b/src/plugins/screencast/screencastlayer.h
+@@ -14,6 +14,7 @@ class ScreencastLayer : public OutputLayer
+ public:
+     explicit ScreencastLayer(LogicalOutput *output, const FormatModifierMap &formats);
+ 
++    void setColorDescription(const std::shared_ptr<ColorDescription> &color);
+     void setFramebuffer(GLFramebuffer *buffer, const Region &bufferDamage);
+ 
+     FormatModifierMap supportedDrmFormats() const override;
+@@ -26,6 +27,7 @@ private:
+     const FormatModifierMap m_formats;
+     GLFramebuffer *m_buffer = nullptr;
+     Region m_bufferDamage;
++    std::shared_ptr<ColorDescription> m_color = ColorDescription::sRGB;
+ };
+ 
+ }
+diff --git a/src/plugins/screencast/screencastsource.h b/src/plugins/screencast/screencastsource.h
+index 776e96f1b98b217e2f261ff0cd92dec27f6c8ddc..d4ce9804a626cf71fcb80bb3570544c9e375a1dc 100644
+--- a/src/plugins/screencast/screencastsource.h
++++ b/src/plugins/screencast/screencastsource.h
+@@ -20,6 +20,7 @@ class RectF;
+ class Region;
+ class RenderDevice;
+ class EglContext;
++class ColorDescription;
+ 
+ class ScreenCastSource : public QObject
+ {
+@@ -36,6 +37,7 @@ public:
+ 
+     virtual void setRenderCursor(bool enable) = 0;
+     virtual void setNextPresentationTimestamp(std::chrono::nanoseconds timestamp, uint32_t refreshRate) = 0;
++    virtual void setColorDescription(const std::shared_ptr<ColorDescription> &color) = 0;
+     virtual Region render(GLFramebuffer *target, const Region &bufferRepair) = 0;
+     virtual Region render(QImage *target, const Region &bufferRepair) = 0;
+ 
+diff --git a/src/plugins/screencast/screencaststream.cpp b/src/plugins/screencast/screencaststream.cpp
+index 45e475246688bf817603f95491d7656e9674b6ca..4d2cc376da7124d21684ea26a1a059d1d6c20403 100644
+--- a/src/plugins/screencast/screencaststream.cpp
++++ b/src/plugins/screencast/screencaststream.cpp
+@@ -171,6 +171,51 @@ void ScreenCastStream::newStreamParams()
+     qCDebug(KWIN_SCREENCAST) << objectName() << "announcing stream params. with dmabuf:" << m_dmabufParams.has_value();
+     const int buffertypes = m_dmabufParams ? (1 << SPA_DATA_DmaBuf) : (1 << SPA_DATA_MemFd);
+ 
++    Colorimetry primaries = Colorimetry::BT709;
++    switch (m_videoFormat.color_primaries) {
++    case SPA_VIDEO_COLOR_PRIMARIES_UNKNOWN:
++    case SPA_VIDEO_COLOR_PRIMARIES_BT709:
++        primaries = Colorimetry::BT709;
++        break;
++    case SPA_VIDEO_COLOR_PRIMARIES_BT2020:
++        primaries = Colorimetry::BT2020;
++        break;
++    case SPA_VIDEO_COLOR_PRIMARIES_ADOBERGB:
++        primaries = Colorimetry::AdobeRGB;
++        break;
++    case SPA_VIDEO_COLOR_PRIMARIES_BT470BG:
++        primaries = Colorimetry::PAL;
++        break;
++    case SPA_VIDEO_COLOR_PRIMARIES_BT470M:
++        primaries = Colorimetry::PAL_M;
++        break;
++        // not sure why Pipewire has these as separate entries,
++        // they're the same actual primaries
++    case SPA_VIDEO_COLOR_PRIMARIES_SMPTE170M:
++    case SPA_VIDEO_COLOR_PRIMARIES_SMPTE240M:
++        primaries = Colorimetry::NTSC;
++        break;
++    case SPA_VIDEO_COLOR_PRIMARIES_FILM:
++        primaries = Colorimetry::GenericFilm;
++        break;
++    default:
++        break;
++    }
++    TransferFunction::Type transfer = TransferFunction::gamma22;
++    switch (m_videoFormat.transfer_function) {
++    case SPA_VIDEO_TRANSFER_BT601:
++    case SPA_VIDEO_TRANSFER_BT709:
++    case SPA_VIDEO_TRANSFER_BT2020_10:
++        transfer = TransferFunction::BT1886;
++        break;
++    case SPA_VIDEO_TRANSFER_GAMMA22:
++    default:
++        break;
++    }
++    m_videoColor = std::make_shared<ColorDescription>(primaries, TransferFunction{transfer});
++
++    qCDebug(KWIN_SCREENCAST) << "chose" << *m_videoColor << "for the stream";
++
+     struct spa_pod_dynamic_builder pod_builder;
+     struct spa_pod_frame f;
+     spa_pod_dynamic_builder_init(&pod_builder, nullptr, 0, 1024);
+@@ -688,6 +733,8 @@ void ScreenCastStream::record(std::chrono::nanoseconds timestamp, Contents conte
+         break;
+     }
+ 
++    m_source->setColorDescription(m_videoColor);
++
+     const auto &context = m_source->eglContext();
+     if (!context || !context->makeCurrent()) {
+         pw_stream_return_buffer(m_pwStream, pwBuffer);
+@@ -878,6 +925,30 @@ spa_pod *ScreenCastStream::buildFormat(struct spa_pod_builder *b, enum spa_video
+                             SPA_POD_Fraction(maxFramerate)),
+                         0);
+ 
++    struct spa_pod_frame primariesFrame;
++    spa_pod_builder_prop(b, SPA_FORMAT_VIDEO_colorPrimaries, 0);
++    spa_pod_builder_push_choice(b, &primariesFrame, SPA_CHOICE_Enum, 0);
++    spa_pod_builder_id(b, SPA_VIDEO_COLOR_PRIMARIES_BT709); // default
++    spa_pod_builder_id(b, SPA_VIDEO_COLOR_PRIMARIES_BT709);
++    spa_pod_builder_id(b, SPA_VIDEO_COLOR_PRIMARIES_BT2020);
++    spa_pod_builder_id(b, SPA_VIDEO_COLOR_PRIMARIES_ADOBERGB);
++    spa_pod_builder_id(b, SPA_VIDEO_COLOR_PRIMARIES_BT470M);
++    spa_pod_builder_id(b, SPA_VIDEO_COLOR_PRIMARIES_BT470BG);
++    spa_pod_builder_id(b, SPA_VIDEO_COLOR_PRIMARIES_SMPTE170M);
++    spa_pod_builder_id(b, SPA_VIDEO_COLOR_PRIMARIES_SMPTE240M);
++    spa_pod_builder_id(b, SPA_VIDEO_COLOR_PRIMARIES_FILM);
++    spa_pod_builder_pop(b, &primariesFrame);
++
++    struct spa_pod_frame transferFrame;
++    spa_pod_builder_prop(b, SPA_FORMAT_VIDEO_transferFunction, 0);
++    spa_pod_builder_push_choice(b, &transferFrame, SPA_CHOICE_Enum, 0);
++    spa_pod_builder_id(b, SPA_VIDEO_TRANSFER_GAMMA22); // default
++    spa_pod_builder_id(b, SPA_VIDEO_TRANSFER_GAMMA22);
++    // SPA_VIDEO_TRANSFER_SRGB is intentionally not supported,
++    // as it would almost certainly yield wrong results.
++    spa_pod_builder_id(b, SPA_VIDEO_TRANSFER_BT709);
++    spa_pod_builder_pop(b, &transferFrame);
++
+     if (format == SPA_VIDEO_FORMAT_BGRA) {
+         /* announce equivalent format without alpha */
+         spa_pod_builder_add(b, SPA_FORMAT_VIDEO_format, SPA_POD_CHOICE_ENUM_Id(3, format, format, SPA_VIDEO_FORMAT_BGRx), 0);
+diff --git a/src/plugins/screencast/screencaststream.h b/src/plugins/screencast/screencaststream.h
+index ad23013a215ef9d23186c30e59612efa69af2850..5e7495167f866824f060655f813453ccd7e19c0f 100644
+--- a/src/plugins/screencast/screencaststream.h
++++ b/src/plugins/screencast/screencaststream.h
+@@ -8,6 +8,7 @@
+ 
+ #pragma once
+ 
++#include "core/colorspace.h"
+ #include "core/drm_formats.h"
+ #include "utils/damagejournal.h"
+ #include "utils/softwarevsyncmonitor.h"
+@@ -124,6 +125,7 @@ private:
+     bool m_closed = false;
+ 
+     spa_video_info_raw m_videoFormat;
++    std::shared_ptr<ColorDescription> m_videoColor = ColorDescription::sRGB;
+     QString m_error;
+     ModifierList m_modifiers;
+     std::optional<ScreenCastDmaBufTextureParams> m_dmabufParams; // when fixated
+diff --git a/src/plugins/screencast/windowscreencastsource.cpp b/src/plugins/screencast/windowscreencastsource.cpp
+index 2fef5d4763120cdce42dbe1bcbf0a5b15fd2b838..cf7a26958d605f448e4ae22c890963459ee41f41 100644
+--- a/src/plugins/screencast/windowscreencastsource.cpp
++++ b/src/plugins/screencast/windowscreencastsource.cpp
+@@ -104,6 +104,11 @@ void WindowScreenCastSource::setNextPresentationTimestamp(std::chrono::nanosecon
+     // TODO use the timestamp for rendering, once we have a SceneView to do that with
+ }
+ 
++void WindowScreenCastSource::setColorDescription(const std::shared_ptr<ColorDescription> &color)
++{
++    m_color = color;
++}
++
+ Region WindowScreenCastSource::render(QImage *target, const Region &bufferDamage)
+ {
+     const auto offscreenTexture = GLTexture::allocate(GL_RGBA8, target->size());
+@@ -120,7 +125,7 @@ Region WindowScreenCastSource::render(QImage *target, const Region &bufferDamage
+ 
+ Region WindowScreenCastSource::render(GLFramebuffer *target, const Region &bufferDamage)
+ {
+-    RenderTarget renderTarget(target);
++    RenderTarget renderTarget(target, m_color);
+     RenderViewport viewport(boundingRect(), devicePixelRatio(), renderTarget, QPoint());
+ 
+     WorkspaceScene *scene = kwinApp()->scene();
+diff --git a/src/plugins/screencast/windowscreencastsource.h b/src/plugins/screencast/windowscreencastsource.h
+index 191259a97f7d999245c292b22eec7d9e4cb08735..f120bc67b753f306cb7775ca8772d2f50012c03f 100644
+--- a/src/plugins/screencast/windowscreencastsource.h
++++ b/src/plugins/screencast/windowscreencastsource.h
+@@ -30,6 +30,7 @@ public:
+ 
+     void setRenderCursor(bool enable) override;
+     void setNextPresentationTimestamp(std::chrono::nanoseconds timestamp, uint32_t refreshRate) override;
++    void setColorDescription(const std::shared_ptr<ColorDescription> &color) override;
+     Region render(GLFramebuffer *target, const Region &bufferDamage) override;
+     Region render(QImage *target, const Region &bufferDamage) override;
+ 
+@@ -50,6 +51,7 @@ private:
+     QList<Window *> m_windows;
+     bool m_active = false;
+     bool m_renderCursor = false;
++    std::shared_ptr<ColorDescription> m_color = ColorDescription::sRGB;
+ };
+ 
+ } // namespace KWin

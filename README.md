@@ -90,18 +90,21 @@ fauxput reset --yes
 
 ## DE / Sunshine support
 
-| Desktop | Supported version | Status |
-|---|---|---|
-| KDE Plasma (kwin) | $\geq$ 6.2 | ✓ |
-| GNOME (Mutter) | $\geq$ 3.36 | ✓  |
-| wlroots (Sway, Hyprland, ...) | TBD | planned |
+| Desktop | Supported version | Status | HDR output |
+|---|---|---|---|
+| KDE Plasma (kwin) | $\geq$ 6.2 | ✓ | $\geq$ 6.8 |
+| GNOME (Mutter) | $\geq$ 3.36 | ✓  | $\geq$ 48 |
+| wlroots (Sway, Hyprland, ...) | TBD | planned | — |
 
 
 Sunshine $\geq$ 2026.4 portal capture works on any of the above once the adapter is in place.
 
+HDR streaming on Plasma also requires KWin and Sunshine capture changes. See the [HDR guide](docs/src/plasma-hdr.md).
+
 ## Documentation
 
 - [Streaming setup walkthrough](docs/src/streaming-setup.md) — wire fauxput into Sunshine + Moonlight
+- [HDR on Plasma](docs/src/plasma-hdr.md) — virtual displays and HDR streaming requirements
 - [Troubleshooting + working Sunshine recipe](docs/src/troubleshooting.md)
 - [Kernel-side dependency](docs/src/kernel-dependency.md) — the `vkms-edid-dkms` patch series
 
