@@ -15,13 +15,9 @@ git clone --depth 1 --branch v7.0 \
     linux-vkms
 cd linux-vkms
 
-# Pull the Chauvet's "v3" patch series from lore.
-b4 am 20251222-vkms-all-config-v3-0-ba42dc3fb9ff@bootlin.com -o ../patches.mbx
-
-# Apply. Patch 19 conflicts on v7.0; skip it (it doesn't affect EDID).
-git am ../patches.mbx     # stops on patch 19
-git am --skip
-git am --continue 
+# Pull and apply the Chauvet's "v3" patch series from lore.
+b4 am 20251222-vkms-all-config-v3-0-ba42dc3fb9ff@bootlin.com 
+git am ./v3_20251222_louis_chauvet_vkms_introduce_multiple_configfs_attributes.mbx
 
 # Stage the patched vkms sources into an out-of-tree package directory.
 mkdir -p ../vkms-edid-dkms
@@ -34,11 +30,11 @@ cp /path/to/fauxput/docs/src/snippets/Makefile .
 cp /path/to/fauxput/docs/src/snippets/dkms.conf .
 
 # Wire the shim into the patched vkms source that uses the stubbed helpers.
-sed -i '1i #include "vkms_oot_shim.h"' vkms_config.c
+sed -i '/#include "vkms_config.h"/i #include "vkms_oot_shim.h"' vkms_config.c
 
 # Build against the running kernel.
 make KDIR=/lib/modules/$(uname -r)/build
-# produces vkms.ko. Verified against 7.0.3-arch1-2.
+# produces vkms.ko. Verified against 7.0.11-arch1-1.
 ```
 
 The companion files:
