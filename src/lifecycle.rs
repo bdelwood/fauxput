@@ -373,15 +373,6 @@ impl<'a> Up<'a> {
             .as_mut()
             .expect("apply_layout only called from attach_compositor");
 
-        // warn if a feature was requested that the compositor doesn't support
-        for kind in plan.unsupported_by(comp.as_ref()) {
-            log::warn!(
-                "compositor `{}` does not support `{}`. Ignoring.",
-                comp.name(),
-                kind
-            )
-        }
-
         comp.apply(&plan)?;
 
         Ok(LayoutChanges {

@@ -242,9 +242,8 @@ impl TryFrom<u32> for Transform {
 }
 
 /// Capability category that a plan may exercise. Adapters declare which
-/// ones they can honor with [`CompositorAdapter::supported_features`]; the
-/// lifecycle layer then warns when a plan asks for one the chosen adapter
-/// can't satisfy.
+/// ones they can honor with [`CompositorAdapter::supported_features`].
+/// Unsupported requests are warned about and omitted before applying the plan.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner, EnumDiscriminants)]
 #[strum_discriminants(name(FeatureKind))]
 #[strum_discriminants(derive(Hash, strum::Display))]
@@ -254,6 +253,8 @@ pub enum Feature {
     Primary { output_name: String },
 
     Hdr { output_name: String },
+
+    SdrNative { output_name: String },
 }
 
 /// What a caller wants the compositor to do.
@@ -282,6 +283,45 @@ impl OutputPlan {
             .collect()
     }
 
+    /// Warn and omit settings the adapter cannot apply.
+    pub(crate) fn for_adapter(&self, adapter: &dyn CompositorAdapter) -> Self {
+        let unsupported = self.unsupported_by(adapter);
+        for kind in &unsupported {
+            log::warn!(
+                "compositor `{}` does not support `{kind}`. Ignoring.",
+                adapter.name()
+            );
+        }
+        let mut plan = self.clone();
+        plan.features
+            .retain(|feature| !unsupported.contains(&FeatureKind::from(feature)));
+        for enable in &mut plan.enables {
+            let feature = match enable.color_mode {
+                Some(ColorMode::Hdr) => FeatureKind::Hdr,
+                Some(ColorMode::SdrNative) => FeatureKind::SdrNative,
+                _ => continue,
+            };
+            if unsupported.contains(&feature) {
+                enable.color_mode = None;
+            }
+        }
+        plan
+    }
+
+    /// Resolve layout overrides against the current head. Color changes are explicit.
+    #[cfg(any(feature = "kde", feature = "wlr", test))]
+    pub(crate) fn target_for(&self, head: &HeadState) -> OutputTarget {
+        let enable = self.enables.iter().find(|entry| entry.name == head.name);
+        OutputTarget {
+            enabled: !self.disables.contains(&head.name) && (enable.is_some() || head.enabled),
+            mode: enable.and_then(|entry| entry.mode).or(head.mode),
+            position: enable.and_then(|entry| entry.position).or(head.position),
+            scale: enable.and_then(|entry| entry.scale).or(head.scale),
+            transform: enable.and_then(|entry| entry.transform).or(head.transform),
+            color_mode: enable.and_then(|entry| entry.color_mode),
+        }
+    }
+
     #[cfg(any(feature = "kde", feature = "gnome", test))]
     pub(crate) fn primary(&self) -> Option<&str> {
         self.features
@@ -289,6 +329,17 @@ impl OutputPlan {
             .find_map(Feature::as_primary)
             .map(String::as_str)
     }
+}
+
+#[cfg(any(feature = "kde", feature = "wlr", test))]
+pub(crate) struct OutputTarget {
+    pub enabled: bool,
+    pub mode: Option<ModeInfo>,
+    pub position: Option<(i32, i32)>,
+    pub scale: Option<f64>,
+    pub transform: Option<Transform>,
+    #[cfg_attr(not(any(feature = "kde", test)), allow(dead_code))]
+    pub color_mode: Option<ColorMode>,
 }
 
 /// Use builder pattern for OutputPlan, so we bake in the expectations here.
@@ -336,10 +387,20 @@ impl OutputPlanBuilder {
             .into());
         }
 
-        if matches!(output.color_mode, Some(ColorMode::Hdr)) {
-            self.features.push(Feature::Hdr {
+        if let Some(scale) = output.scale
+            && (!scale.is_finite() || scale <= 0.0)
+        {
+            return Err(PlanError::InvalidScale(scale).into());
+        }
+
+        match output.color_mode {
+            Some(ColorMode::Hdr) => self.features.push(Feature::Hdr {
                 output_name: output.name.clone(),
-            });
+            }),
+            Some(ColorMode::SdrNative) => self.features.push(Feature::SdrNative {
+                output_name: output.name.clone(),
+            }),
+            _ => {}
         }
         self.enables.push(output);
         Ok(self)
@@ -430,6 +491,9 @@ pub enum PlanError {
         height: i32,
         refresh: i32,
     },
+
+    #[error("output scale must be finite and positive, got {0}")]
+    InvalidScale(f64),
 }
 
 /// Request to bring a head up at a specific mode and position. If mode or position are
@@ -522,6 +586,54 @@ mod tests {
         fn apply(&mut self, _: &OutputPlan) -> Result<()> {
             unimplemented!()
         }
+    }
+
+    #[test]
+    fn plan_preserves_layout_and_applies_overrides() {
+        let mut head = HeadState {
+            name: "DP-1".into(),
+            enabled: true,
+            mode: Some(ModeInfo {
+                width: 2560,
+                height: 1440,
+                refresh_mhz: 60_000,
+            }),
+            position: Some((100, 50)),
+            scale: Some(1.25),
+            transform: Some(Transform::Rot90),
+            color_mode: Some(ColorMode::Hdr),
+        };
+        let untouched = OutputPlan::default().target_for(&head);
+        assert_eq!(untouched.mode, head.mode);
+        assert_eq!(untouched.position, head.position);
+        assert_eq!(untouched.scale, head.scale);
+        assert_eq!(untouched.transform, head.transform);
+        assert!(untouched.enabled);
+        assert_eq!(untouched.color_mode, None);
+
+        let plan = OutputPlan::builder()
+            .enable(EnableOutput {
+                name: head.name.clone(),
+                position: Some((0, 0)),
+                scale: Some(1.5),
+                color_mode: Some(ColorMode::Sdr),
+                ..Default::default()
+            })
+            .unwrap()
+            .build();
+        head.enabled = false;
+        assert!(!OutputPlan::default().target_for(&head).enabled);
+        let enabled = plan.target_for(&head);
+        assert!(enabled.enabled);
+        assert_eq!(enabled.color_mode, Some(ColorMode::Sdr));
+        assert_eq!(enabled.position, Some((0, 0)));
+        assert_eq!(enabled.scale, Some(1.5));
+        assert_eq!(enabled.mode, head.mode);
+        assert_eq!(enabled.transform, head.transform);
+
+        head.enabled = true;
+        let plan = OutputPlan::builder().disable(&head.name).unwrap().build();
+        assert!(!plan.target_for(&head).enabled);
     }
 
     fn enable(name: &str) -> EnableOutput {
@@ -617,7 +729,7 @@ mod tests {
     }
 
     /// Capability diff = requested_features - supported_features.
-    /// Drives the "compositor doesn't support" warning in lifecycle.
+    /// Unsupported settings are omitted before applying the plan.
     #[test]
     fn feature_capability_diff() {
         assert_eq!(FeatureKind::Primary.to_string(), "primary");
@@ -652,6 +764,35 @@ mod tests {
             ..Default::default()
         };
         assert!(plan.unsupported_by(&with_primary).is_empty());
+        assert!(plan.for_adapter(&no_caps).primary().is_none());
+        assert_eq!(plan.for_adapter(&with_primary).primary(), Some("fauxput-0"));
+
+        for (color_mode, feature) in [
+            (ColorMode::Hdr, FeatureKind::Hdr),
+            (ColorMode::SdrNative, FeatureKind::SdrNative),
+        ] {
+            let plan = OutputPlan::builder()
+                .enable(EnableOutput {
+                    color_mode: Some(color_mode),
+                    scale: Some(1.25),
+                    ..enable("DP-1")
+                })
+                .unwrap()
+                .build();
+            let filtered = plan.for_adapter(&no_caps);
+            assert!(filtered.features.is_empty());
+            assert_eq!(filtered.enables[0].color_mode, None);
+            assert_eq!(filtered.enables[0].scale, Some(1.25));
+            assert_eq!(plan.enables[0].color_mode, Some(color_mode));
+            let supported = MockAdapter {
+                supported: HashSet::from([feature]),
+                ..Default::default()
+            };
+            assert_eq!(
+                plan.for_adapter(&supported).enables[0].color_mode,
+                Some(color_mode)
+            );
+        }
     }
 
     // `primary` projects the latest Feature::Primary out of the features Vec.
@@ -676,6 +817,16 @@ mod tests {
     /// One branch per builder invariant; new rules append a branch.
     #[test]
     fn builder_validation_rejects_invariants() {
+        for scale in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let result = OutputPlan::builder().enable(EnableOutput {
+                scale: Some(scale),
+                ..enable("DP-1")
+            });
+            assert!(matches!(
+                result,
+                Err(Error::Plan(PlanError::InvalidScale(_)))
+            ));
+        }
         let r = OutputPlan::builder().enable(EnableOutput {
             name: String::new(),
             mode: None,

@@ -1,6 +1,10 @@
 //! Library for `fauxput`
 
 pub mod backend;
+#[cfg_attr(
+    not(any(feature = "kde", feature = "gnome", feature = "wlr")),
+    allow(dead_code)
+)]
 mod compositor;
 pub mod edid;
 pub mod error;
