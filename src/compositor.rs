@@ -35,7 +35,7 @@ pub enum CompositorError {
     Dbus {
         context: &'static str,
         #[source]
-        source: zbus::Error,
+        source: Box<zbus::Error>,
     },
 
     #[error("timed out after {timeout:?} waiting for {reason}")]

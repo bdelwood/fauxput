@@ -318,12 +318,12 @@ impl GnomeCompositor {
     pub(crate) fn connect() -> Result<Option<Self>> {
         let conn = Connection::session().map_err(|source| CompositorError::Dbus {
             context: "gnome: connect session bus",
-            source,
+            source: Box::new(source),
         })?;
         let proxy =
             DisplayConfigProxyBlocking::new(&conn).map_err(|source| CompositorError::Dbus {
                 context: "gnome: create display config proxy",
-                source,
+                source: Box::new(source),
             })?;
         let state = match proxy.get_current_state() {
             Ok(state) => state,
@@ -339,7 +339,7 @@ impl GnomeCompositor {
             Err(source) => {
                 return Err(CompositorError::Dbus {
                     context: "gnome: get current state",
-                    source,
+                    source: Box::new(source),
                 }
                 .into());
             }
@@ -355,7 +355,7 @@ impl GnomeCompositor {
             .get_current_state()
             .map_err(|source| CompositorError::Dbus {
                 context: "gnome: get current state",
-                source,
+                source: Box::new(source),
             })
             .map_err(Into::into)
     }
@@ -364,7 +364,7 @@ impl GnomeCompositor {
         let proxy = DisplayConfigProxyBlocking::new(&self.conn).map_err(|source| {
             CompositorError::Dbus {
                 context: "gnome: create display config proxy",
-                source,
+                source: Box::new(source),
             }
         })?;
         Ok(proxy)
@@ -406,7 +406,7 @@ impl CompositorAdapter for GnomeCompositor {
             .apply_monitors_config(state.serial, Method::Temporary, &logical, properties)
             .map_err(|source| CompositorError::Dbus {
                 context: "gnome: apply monitors config",
-                source,
+                source: Box::new(source),
             })?;
         Ok(())
     }

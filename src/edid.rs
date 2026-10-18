@@ -16,7 +16,8 @@ use redid::{
     EdidDetailedTimingDigitalSyncKind, EdidDetailedTimingStereo, EdidDetailedTimingSync,
     EdidDisplayRangePixelClock, EdidDisplayTransferCharacteristics, EdidExtension,
     EdidExtensionCTA861, EdidExtensionCTA861ColorimetryDataBlock,
-    EdidExtensionCTA861HdrStaticMetadataDataBlock, EdidExtensionCTA861Revision3,
+    EdidExtensionCTA861HdrStaticMetadataDataBlock, EdidExtensionCTA861HdrStaticMetadataDescriptor,
+    EdidExtensionCTA861HdrStaticMetadataLuminance, EdidExtensionCTA861Revision3,
     EdidExtensionCTA861Revision3DataBlock, EdidFilterChromaticity, EdidProductCode,
     EdidR4BasicDisplayParametersFeatures, EdidR4Descriptor, EdidR4DigitalColorDepth,
     EdidR4DigitalVideoInputDefinition, EdidR4DisplayColor, EdidR4DisplayRangeLimits,
@@ -161,10 +162,12 @@ pub fn build(spec: &EdidSpec) -> Result<Vec<u8>> {
             .traditional_gamma_sdr(true)
             .smpte_st2084(true)
             .bt_2100_hlg(true)
-            .static_metadata_type1(true)
-            .max_luminance(138)
-            .max_avg_luminance(96)
-            .min_luminance(18)
+            .static_metadata_descriptor(EdidExtensionCTA861HdrStaticMetadataDescriptor::Type1)
+            .luminance(EdidExtensionCTA861HdrStaticMetadataLuminance::MinMaxAvg {
+                max_luminance: 138,
+                max_avg_luminance: 96,
+                min_luminance: 18,
+            })
             .build();
 
         let cta = EdidExtensionCTA861Revision3::builder()
