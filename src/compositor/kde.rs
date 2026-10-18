@@ -145,31 +145,6 @@ impl CompositorAdapter for KdeCompositor {
         })
     }
 
-    /// Polls until a head not in `baseline` appears. KWin advertises new
-    /// connectors asynchronously after the kernel hot-plug.
-    fn wait_for_new_head(
-        &mut self,
-        baseline: &HashSet<String>,
-        timeout: Duration,
-    ) -> Result<HeadState> {
-        let start = std::time::Instant::now();
-        self.session.poll_until("new kde head", timeout, |session| {
-            session.roundtrip("kde: head poll")?;
-            let heads = session.state.live_heads();
-            let names: Vec<String> = heads.iter().map(|h| h.name.clone()).collect();
-            let new = heads
-                .into_iter()
-                .find(|head| !baseline.contains(&head.name));
-            log::debug!(
-                "kde head poll t={}ms heads={:?} new={:?}",
-                start.elapsed().as_millis(),
-                names,
-                new.as_ref().map(|h| h.name.as_str()),
-            );
-            Ok(new)
-        })
-    }
-
     fn apply(&mut self, plan: &OutputPlan) -> Result<()> {
         if plan
             .enables

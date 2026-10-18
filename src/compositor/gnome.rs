@@ -11,9 +11,6 @@ use crate::compositor::{
 };
 
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc;
-use std::thread;
-use std::time::{Duration, Instant};
 use zbus::blocking::Connection;
 
 impl From<CurrentState> for OutputSnapshot {
@@ -386,80 +383,6 @@ impl CompositorAdapter for GnomeCompositor {
 
     fn snapshot(&mut self) -> Result<OutputSnapshot> {
         Ok(self.current_state()?.into())
-    }
-
-    fn wait_for_new_head(
-        &mut self,
-        baseline: &HashSet<String>,
-        timeout: Duration,
-    ) -> Result<HeadState> {
-        // Subscribe to `MonitorsChanged` BEFORE the first state check so we
-        // can't lose an edge that fires between the check and the subscribe.
-        // Mutter tells us monitors changed  `MonitorsChanged` exactly when `manager->monitors` is
-        // rebuilt,
-        // which is also the moment the hot-added connector becomes
-        // visible to the state monitor.
-        //  The kernel-side HPD toggle in the vkms commit triggers mutter to rebuild
-        // here we just need to wake up the moment Mutter rings the bell.
-        let signal_iter =
-            self.proxy()?
-                .receive_monitors_changed()
-                .map_err(|source| CompositorError::Dbus {
-                    context: "gnome: subscribe MonitorsChanged",
-                    source,
-                })?;
-
-        // Pump signal arrivals through an mpsc channel so the main thread
-        let (tx, rx) = mpsc::channel::<()>();
-        thread::spawn(move || {
-            for _ev in signal_iter {
-                if tx.send(()).is_err() {
-                    break;
-                }
-            }
-        });
-
-        // Captures `baseline` and `timeout`
-        let make_timeout = |last_seen: &[String]| -> crate::Error {
-            CompositorError::Timeout {
-                reason: format!(
-                    "GNOME never surfaced a new head; \
-                     baseline={baseline:?}, last seen={last_seen:?}"
-                ),
-                timeout,
-            }
-            .into()
-        };
-
-        let deadline = Instant::now() + timeout;
-        let mut last_seen: Vec<String>;
-        loop {
-            let snap = self.snapshot()?;
-            last_seen = snap.heads.iter().map(|h| h.name.clone()).collect();
-            if let Some(head) = snap.heads.into_iter().find(|h| !baseline.contains(&h.name)) {
-                return Ok(head);
-            }
-            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-                return Err(make_timeout(&last_seen));
-            };
-            match rx.recv_timeout(remaining) {
-                Ok(()) => continue,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    return Err(make_timeout(&last_seen));
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    // Worker exited
-                    //  One last snapshot in case the rebuild raced past us, then fail.
-                    let snap = self.snapshot()?;
-                    last_seen = snap.heads.iter().map(|h| h.name.clone()).collect();
-                    if let Some(head) = snap.heads.into_iter().find(|h| !baseline.contains(&h.name))
-                    {
-                        return Ok(head);
-                    }
-                    return Err(make_timeout(&last_seen));
-                }
-            }
-        }
     }
 
     fn apply(&mut self, plan: &OutputPlan) -> Result<()> {

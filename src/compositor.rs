@@ -12,7 +12,7 @@ pub mod wayland;
 pub mod wlr;
 
 use std::collections::HashSet;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
@@ -455,16 +455,6 @@ pub trait CompositorAdapter: Send {
     /// Return every head the compositor currently advertises.
     fn snapshot(&mut self) -> Result<OutputSnapshot>;
 
-    /// Block until a head appears whose name is NOT in `baseline`.
-    /// Used after a kernel hot-plug to wait for the compositor to surface
-    /// the new connector. Compositors enumerate hot-added connectors
-    /// asynchronously.
-    fn wait_for_new_head(
-        &mut self,
-        baseline: &HashSet<String>,
-        timeout: Duration,
-    ) -> Result<HeadState>;
-
     /// Apply a plan atomically.
     fn apply(&mut self, plan: &OutputPlan) -> Result<()>;
 
@@ -474,14 +464,43 @@ pub trait CompositorAdapter: Send {
     }
 }
 
+impl dyn CompositorAdapter + '_ {
+    /// Checks fresh output state through the deadline. Snapshot calls can block.
+    pub(crate) fn wait_for_outputs<T>(
+        &mut self,
+        timeout: Duration,
+        reason: &str,
+        mut ready: impl FnMut(&OutputSnapshot) -> Option<T>,
+    ) -> Result<T> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let snapshot = self.snapshot()?;
+            if let Some(value) = ready(&snapshot) {
+                return Ok(value);
+            }
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                let names: Vec<_> = snapshot.heads.iter().map(|head| &head.name).collect();
+                return Err(CompositorError::Timeout {
+                    reason: format!("{reason}; last seen={names:?}"),
+                    timeout,
+                }
+                .into());
+            };
+            std::thread::sleep(Duration::from_millis(50).min(remaining));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Error;
 
     /// Mock adapter for unit-testing capability diffing without spinning up Wayland.
+    #[derive(Default)]
     struct MockAdapter {
         supported: HashSet<FeatureKind>,
+        snapshot: Option<OutputSnapshot>,
     }
 
     impl CompositorAdapter for MockAdapter {
@@ -492,10 +511,9 @@ mod tests {
             self.supported.clone()
         }
         fn snapshot(&mut self) -> Result<OutputSnapshot> {
-            unimplemented!()
-        }
-        fn wait_for_new_head(&mut self, _: &HashSet<String>, _: Duration) -> Result<HeadState> {
-            unimplemented!()
+            self.snapshot
+                .clone()
+                .ok_or_else(|| CompositorError::CompositorWentAway.into())
         }
         fn apply(&mut self, _: &OutputPlan) -> Result<()> {
             unimplemented!()
@@ -510,6 +528,36 @@ mod tests {
             color_mode: None,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn wait_checks_state_before_timeout() {
+        let mut adapter = MockAdapter {
+            snapshot: Some(OutputSnapshot::default()),
+            ..Default::default()
+        };
+        (&mut adapter as &mut dyn CompositorAdapter)
+            .wait_for_outputs(Duration::ZERO, "outputs gone", |snapshot| {
+                snapshot.heads.is_empty().then_some(())
+            })
+            .unwrap();
+        assert!(matches!(
+            (&mut adapter as &mut dyn CompositorAdapter).wait_for_outputs(
+                Duration::ZERO,
+                "output appeared",
+                |_| None::<()>
+            ),
+            Err(Error::Compositor(CompositorError::Timeout { .. }))
+        ));
+        adapter.snapshot = None;
+        assert!(matches!(
+            (&mut adapter as &mut dyn CompositorAdapter).wait_for_outputs(
+                Duration::ZERO,
+                "outputs gone",
+                |_| Some(())
+            ),
+            Err(Error::Compositor(CompositorError::CompositorWentAway))
+        ));
     }
 
     /// OutputSnapshot must serde round-trip; empty snapshot serializes to a stable string
@@ -574,6 +622,7 @@ mod tests {
         let empty = OutputPlan::builder().build();
         let no_caps = MockAdapter {
             supported: HashSet::new(),
+            ..Default::default()
         };
         assert!(empty.requested_features().is_empty());
         assert!(empty.unsupported_by(&no_caps).is_empty());
@@ -596,6 +645,7 @@ mod tests {
         // Adapter has Primary: nothing unsupported.
         let with_primary = MockAdapter {
             supported: HashSet::from([FeatureKind::Primary]),
+            ..Default::default()
         };
         assert!(plan.unsupported_by(&with_primary).is_empty());
     }

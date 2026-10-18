@@ -2,10 +2,7 @@
 //! adapter, and the persistent state file together.
 
 use log;
-use std::{
-    collections::HashSet,
-    time::{Duration, Instant},
-};
+use std::{collections::HashSet, time::Duration};
 
 use crate::{
     Result,
@@ -279,7 +276,14 @@ impl<'a> Up<'a> {
             .iter()
             .map(|h| h.name.clone())
             .collect();
-        let new_head = comp.wait_for_new_head(&baseline_names, HEAD_APPEAR_TIMEOUT)?;
+        let new_head =
+            comp.wait_for_outputs(HEAD_APPEAR_TIMEOUT, "new output to appear", |snapshot| {
+                snapshot
+                    .heads
+                    .iter()
+                    .find(|head| !baseline_names.contains(&head.name))
+                    .cloned()
+            })?;
         let head_name = new_head.name.clone();
         self.attached_head_name = Some(head_name.clone());
         self.store.update_instance(&handle.local_id, |rec| {
@@ -430,32 +434,14 @@ fn disconnect_outputs(
     for handle in handles {
         names.extend(backend.disconnect(handle)?);
     }
-    let Some(comp) = compositor.as_mut() else {
+    let Some(comp) = compositor.as_mut().filter(|_| !names.is_empty()) else {
         return Ok(());
     };
-    // Mutter debounces disconnection for three seconds; don't substitute a fixed sleep.
-    let timeout = Duration::from_secs(8);
-    let deadline = Instant::now() + timeout;
-    while !names.is_empty() {
-        let snapshot = comp.snapshot()?;
-        if !snapshot
-            .heads
-            .iter()
-            .any(|head| names.contains(head.name.as_str()))
-        {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(crate::compositor::CompositorError::Timeout {
-                reason: "compositor to acknowledge display disconnection; devices kept for retry"
-                    .into(),
-                timeout,
-            }
-            .into());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    Ok(())
+    comp.wait_for_outputs(
+        Duration::from_secs(8),
+        "outputs to disappear; devices kept for retry",
+        |snapshot| (!snapshot.heads.iter().any(|head| names.contains(&head.name))).then_some(()),
+    )
 }
 
 /// Build one combined plan that disables every fauxput head, re-enables
