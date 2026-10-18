@@ -9,6 +9,10 @@ Mutter can keep removed VKMS devices in its GPU list ([GNOME/mutter#710](https:/
 <!-- TODO: Remove this workaround once Mutter handles GPU removal and reuse: https://gitlab.gnome.org/GNOME/mutter/-/issues/710 -->
 Keep the fauxput display up between streaming connections to avoid repeated GPU hotplug. Create it once with `fauxput up`, omit the per-connection `up`/`down` commands, and run `fauxput down` when you're finished.
 
+## COSMIC crashes or freezes when changing displays
+
+COSMIC's output handling has upstream [crashes](https://github.com/pop-os/cosmic-comp/issues/2727) and [deadlocks](https://github.com/pop-os/cosmic-comp/issues/2693). Repeated output changes can trigger these with fauxput or `wlr-randr`.
+
 ## SDDM with an X11 greeter results in logout on `fauxput down`
 
 If you're running SDDM with an X11 greeter, `fauxput down` (or anything else that destroys a vkms instance) will kick you back to the login screen.
