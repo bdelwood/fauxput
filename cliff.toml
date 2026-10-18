@@ -100,7 +100,7 @@ commit_parsers = [
   { message = "^test", group = "Tests" },
   { message = "^build", group = "Build" },
   { message = "^ci", group = "CI" },
-  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore(\\(release\\)|: (prepare|release) v?[0-9])", skip = true },
   { message = "^chore", group = "Miscellaneous" },
   { message = "^revert", group = "Reverts" },
   { message = ".*", group = "Other" },
