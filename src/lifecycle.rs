@@ -175,7 +175,8 @@ impl<'a> Up<'a> {
         self.pre_create = self
             .compositor
             .as_mut()
-            .and_then(|c| c.snapshot().ok())
+            .map(|c| c.snapshot())
+            .transpose()?
             .unwrap_or_default();
 
         let outcome = self.backend.create(&self.req.spec)?;
