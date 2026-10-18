@@ -2,12 +2,15 @@
 
 
 [![CI status][ci-img]][ci-url]
+[![MSRV: Rust >=1.94][msrv-img]][msrv-url]
 [![Documentation][doc-img]][doc-url]
 [![AUR version][aur-img]][aur-url]
 [![License][license-img]][license-url]
 
 [ci-img]: https://img.shields.io/github/actions/workflow/status/bdelwood/fauxput/ci.yaml?branch=master&style=flat-square&label=CI
 [ci-url]: https://github.com/bdelwood/fauxput/actions/workflows/ci.yaml
+[msrv-img]: https://img.shields.io/badge/rust-%E2%89%A51.94-orange?style=flat-square
+[msrv-url]: Cargo.toml
 [doc-img]: https://img.shields.io/badge/docs-fauxput-4d76ae?style=flat-square
 [doc-url]: https://bdelwood.github.io/fauxput/
 [aur-img]: https://img.shields.io/aur/version/fauxput?style=flat-square&label=AUR
@@ -16,6 +19,8 @@
 [license-url]: https://github.com/bdelwood/fauxput/blob/master/LICENSE
 
 A cli for managing virtual displays on Wayland. Designed as a general-purpose virtual-display manager that integrates well with streaming hosts (Sunshine, Steam Remote Play).
+
+Supports KDE Plasma, GNOME, and wlr-compatible compositors such as Sway. COSMIC support is experimental.
 
 ## But why?
 
@@ -39,6 +44,8 @@ I was super annoyed that resolutions weren't being dynamically set by Sunshine c
 
 
 ### Build from source
+
+Add `--features wlr` to either command below for Sway, COSMIC, or other wlr-compatible compositors.
 
 ```bash
 cargo build --release
@@ -120,10 +127,13 @@ Scale is a multiplier, e.g. `1.25` means 125%. Omit it to use the compositor's s
 |---|---|---|---|
 | KDE Plasma (kwin) | $\geq$ 6.2 | ✓ | $\geq$ 6.8 |
 | GNOME (Mutter) | $\geq$ 3.36 | ✓  | $\geq$ 48 |
-| wlroots (Sway, Hyprland, ...) | TBD | planned | — |
+| Sway | $\geq$ 1.11 | ✓ | no compositor support |
+| COSMIC | Epoch $\geq$ 1.0 | Experimental; [hotplug issues](docs/src/troubleshooting.md#cosmic-crashes-or-freezes-when-changing-displays) | no compositor support |
+| Other wlr-compatible compositors | `zwlr_output_manager_v1` version $\geq$ 1 | Experimental | no compositor support |
 
+wlr support requires building with `--features wlr`. HDR, primary-output selection (`--primary`), and mirrored layouts are not supported when using wlr.
 
-Sunshine $\geq$ 2026.4 portal capture works on any of the above once the adapter is in place.
+Sunshine $\geq$ 2026.4 portal capture also requires a ScreenCast portal backend for your compositor.
 
 HDR streaming on Plasma also requires KWin and Sunshine capture changes. See the [HDR guide](docs/src/plasma-hdr.md).
 
@@ -137,9 +147,6 @@ HDR streaming on Plasma also requires KWin and Sunshine capture changes. See the
 
 ## TODO
 
-- [ ] Additional compositor support
-    - [x] Mutter
-    - [ ] wlroots family
 - [ ] VRR
 
 ## License
