@@ -20,6 +20,9 @@ use crate::compositor::kde::KdeCompositor;
 #[cfg(feature = "gnome")]
 use crate::compositor::gnome::GnomeCompositor;
 
+#[cfg(feature = "wlr")]
+use crate::compositor::wlr::WlrCompositor;
+
 /// How long to wait for the kernel hot-plug to surface as a Wayland head.
 const HEAD_APPEAR_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -39,6 +42,14 @@ fn connect_compositor() -> Option<Box<dyn CompositorAdapter>> {
             Ok(Some(c)) => return Some(Box::new(c)),
             Ok(None) => log::debug!("org.gnome.Mutter.DisplayConfig not available"),
             Err(e) => log::warn!("gnome connect failed: {e:#}"),
+        }
+    }
+    #[cfg(feature = "wlr")]
+    {
+        match WlrCompositor::connect() {
+            Ok(Some(c)) => return Some(Box::new(c)),
+            Ok(None) => log::debug!("zwlr_output_manager_v1 not advertised"),
+            Err(e) => log::warn!("wlr connect failed: {e:#}"),
         }
     }
     None

@@ -660,6 +660,7 @@ dependencies = [
  "toml",
  "wayland-client",
  "wayland-protocols-plasma",
+ "wayland-protocols-wlr",
  "zbus",
 ]
 
@@ -1602,6 +1603,18 @@ dependencies = [
 
 [[package]]
 name = "wayland-protocols-plasma"
+version = "0.3.12"
+source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#017830f31fd152cd9a06e613df086d635d25f719"
+dependencies = [
+ "bitflags",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-wlr"
 version = "0.3.12"
 source = "git+https://github.com/bdelwood/wayland-rs?branch=feat%2Fplasma-protocols-bump#017830f31fd152cd9a06e613df086d635d25f719"
 dependencies = [
