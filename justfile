@@ -176,7 +176,11 @@ vkms-dkms version="":
     set -euo pipefail
     source_dir='{{ VKMS_SRC }}'
     requested_version='{{ version }}'
-    test -n "$source_dir"
+    if [[ -z $source_dir ]]; then
+        echo 'Set VKMS_SRC to your prepared module source directory:' >&2
+        echo '  VKMS_SRC=path/to/vkms-edid-dkms just vkms-dkms' >&2
+        exit 2
+    fi
     source_version=$(sed -n 's/^PACKAGE_VERSION="\([^"]*\)"$/\1/p' "$source_dir/dkms.conf")
     case "$source_version" in 0.1|0.2|0.3-7.1|0.3-7.2) ;; *) echo 'Unrecognized DKMS source version' >&2; exit 2 ;; esac
     if [[ -n $requested_version && $requested_version != "$source_version" ]]; then

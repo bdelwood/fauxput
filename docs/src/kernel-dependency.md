@@ -109,7 +109,7 @@ For 7.1/7.2, `just vkms-prepare` adjusts the package version and adds a kernel-v
 Load the freshly-built `vkms.ko` directly.
 
 ```bash
-just vkms-insmod
+VKMS_SRC=path/to/vkms-edid-dkms just vkms-insmod
 # or, equivalently:
 make -C path/to/vkms-edid-dkms -s
 sudo modprobe -r vkms
@@ -122,10 +122,10 @@ If `modprobe -r vkms` fails ("module is in use"), the host compositor is holding
 
 Stage under `/usr/src/`, register with DKMS, and DKMS should rebuild the module on every kernel upgrade within the supported series.
 
-Set `VKMS_SRC` to your prepared source directory. `just vkms-dkms` reads the version from `dkms.conf`: `0.1` for 7.0, `0.3-7.1` for 7.1, or `0.3-7.2` for 7.2. Adjust the version in the manual commands accordingly.
+Set `VKMS_SRC` to your prepared source directory, such as `vkms-edid-7.1` or `vkms-edid-7.2`. `just vkms-dkms` reads the version from `dkms.conf`: `0.1` for 7.0, `0.3-7.1` for 7.1, or `0.3-7.2` for 7.2. Adjust the version in the manual commands accordingly.
 
 ```bash
-just vkms-dkms
+VKMS_SRC=path/to/vkms-edid-dkms just vkms-dkms
 # or, equivalently:
 sudo cp -rT path/to/vkms-edid-dkms /usr/src/vkms-edid-0.1
 sudo dkms add -m vkms-edid -v 0.1
