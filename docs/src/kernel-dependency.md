@@ -122,6 +122,8 @@ If `modprobe -r vkms` fails ("module is in use"), the host compositor is holding
 
 Stage under `/usr/src/`, register with DKMS, and DKMS should rebuild the module on every kernel upgrade within the supported series.
 
+Install `dkms` first.
+
 Set `VKMS_SRC` to your prepared source directory, such as `vkms-edid-7.1` or `vkms-edid-7.2`. `just vkms-dkms` reads the version from `dkms.conf`: `0.1` for 7.0, `0.3-7.1` for 7.1, or `0.3-7.2` for 7.2. Adjust the version in the manual commands accordingly.
 
 ```bash
@@ -130,6 +132,13 @@ VKMS_SRC=path/to/vkms-edid-dkms just vkms-dkms
 sudo cp -rT path/to/vkms-edid-dkms /usr/src/vkms-edid-0.1
 sudo dkms add -m vkms-edid -v 0.1
 sudo dkms install -m vkms-edid -v 0.1
+```
+
+If the helper copied the sources before failing because `dkms` was missing, install `dkms` and finish directly. For 7.1:
+
+```bash
+sudo dkms add -m vkms-edid -v 0.3-7.1
+sudo dkms install -m vkms-edid -v 0.3-7.1 -k "$(uname -r)"
 ```
 
 Reboot to load the installed module; the helper does not reload VKMS.
