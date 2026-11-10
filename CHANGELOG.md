@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-11-10
+
+### Documentation
+- Explain DKMS recovery [`ded4a14`](https://github.com/bdelwood/fauxput/commit/ded4a14ed7fa77b402166896da078e34d40a82c1)
+- Explain missing VKMS source [`e808455`](https://github.com/bdelwood/fauxput/commit/e80845519dcf57856fc9efa57d25ddfc9a458132)
+
+### Features
+- Add basic profile support [`20d5598`](https://github.com/bdelwood/fauxput/commit/20d55984ba32b413bec18ca5760c2ef3800bd0a8)
+
+### Miscellaneous
+- Use upstream redid [`0c6c2f2`](https://github.com/bdelwood/fauxput/commit/0c6c2f2c23f5c63006a26b0d6e72933aef21f7a6)
+- Update dependencies [`173c38e`](https://github.com/bdelwood/fauxput/commit/173c38e8048feebef433510d029e24c5fbef5af0)
+
 ## [0.7.0] - 2026-10-18
 
 ### Bug Fixes
